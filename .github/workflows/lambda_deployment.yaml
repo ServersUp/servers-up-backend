@@ -1,0 +1,122 @@
+name: AWS Lambda CI/CD - Multi-Region Deploy (OIDC)
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  GO_VERSION: '1.22'
+
+# Set permissions for OIDC token creation
+permissions:
+  id-token: write # This is required to fetch the OIDC identity token
+  contents: read # Required to checkout the code
+
+jobs:
+# ------------------------------------
+# 1. CI: Test and Build (Remains Unchanged)
+# ------------------------------------
+  test-and-build:
+    runs-on: ubuntu-latest
+    outputs:
+      artifact-path: ${{ steps.package.outputs.artifact-path }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Download Go Modules
+        run: go mod download
+
+      - name: Run Unit Tests
+        run: go test -v ./...
+
+      - name: 🔨 Build Lambda Binary
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bootstrap ./cmd/bnet-polling-function/main.go
+
+      - name: 📦 Create Deployment Package
+        id: package
+        run: |
+          zip lambda-deployment-package.zip bootstrap
+          echo "artifact-path=lambda-deployment-package.zip" >> $GITHUB_OUTPUT
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lambda-package
+          path: lambda-deployment-package.zip
+
+---
+
+# ------------------------------------
+# 2. CD: Get Config and Deploy to Matrix
+# ------------------------------------
+  deploy-multi-region:
+    needs: test-and-build
+    runs-on: ubuntu-latest
+
+    # 2.1. Dynamic Configuration Step
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Go (for config reader)
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Get Multi-Region Configuration
+        id: config
+        run: |
+          CONFIG_JSON=$(go run config_reader.go)
+          echo "config-matrix=$CONFIG_JSON" >> $GITHUB_OUTPUT
+
+    # 2.2. Deployment Matrix Job Definition
+    strategy:
+      fail-fast: false
+      matrix:
+        # matrix_config is the array: [{name: "us-east-1", alias: "prod", function_name: "..."}]
+        region_config: ${{ fromJson(steps.config.outputs.config-matrix) }}
+
+        # New matrix property to hold the direct ARN for OIDC assumption
+        # Note: You MUST update these ARNs to match the roles created in each region/account.
+        include:
+          - region_config: { name: "us-east-1" }
+            role_arn: arn:aws:iam::000000000000:role/github-oidc-us-east-1 # ⬅️ UPDATE THIS ARN!
+          - region_config: { name: "eu-west-1" }
+            role_arn: arn:aws:iam::000000000000:role/github-oidc-eu-west-1 # ⬅️ UPDATE THIS ARN!
+          - region_config: { name: "ap-southeast-2" }
+            role_arn: arn:aws:iam::000000000000:role/github-oidc-ap-southeast-2 # ⬅️ UPDATE THIS ARN!
+
+    steps:
+      - name: Download Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: lambda-package
+
+      - name: Configure AWS Credentials (OIDC Role Assumption)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          # The ARN is now pulled directly from the matrix include block
+          role-to-assume: ${{ matrix.role_arn }}
+
+          # The region to target is taken from the config matrix
+          aws-region: ${{ matrix.region_config.name }}
+
+          # Use a unique session name
+          role-session-name: GitHubActionsSession-${{ github.sha }}
+
+      - name: 🚀 Deploy Lambda Code to ${{ matrix.region_config.name }}
+        run: |
+          aws lambda update-function-code \
+            --function-name ${{ matrix.region_config.function_name }} \
+            --zip-file fileb://lambda-deployment-package.zip
+
+          echo "✅ Deployed ${{ matrix.region_config.function_name }} to ${{ matrix.region_config.name }}"
