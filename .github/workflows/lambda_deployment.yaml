@@ -46,9 +46,6 @@ jobs:
           name: lambda-package
           path: lambda-deployment-package.zip
 
----
-## ⚙️ 2. Get Configuration (New Setup Job)
----
   get-config:
     needs: test-and-build
     runs-on: ubuntu-latest
@@ -82,9 +79,6 @@ jobs:
           echo "config-matrix=$CONFIG_JSON" >> $GITHUB_OUTPUT
           echo "::endgroup::"
 
----
-## 🚀 3. Deploy to Matrix (Matrix Execution Job)
----
   deploy-multi-region:
     # This job needs both the artifact and the config output
     needs: [test-and-build, get-config]
