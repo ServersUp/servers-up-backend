@@ -7,12 +7,12 @@ on:
   workflow_dispatch:
 
 env:
-  GO_VERSION: '1.22.12' # Recommended: Pin to a specific version
+  GO_VERSION: '1.22.12' # Pin to a specific version for stability
 
 # Set permissions for OIDC token creation
 permissions:
   id-token: write # Required for OIDC token fetch
-  contents: read # Required to checkout the code
+  contents: read  # Required to checkout the code
 
 jobs:
 # ------------------------------------
@@ -30,7 +30,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          # cache: false # Uncomment to disable caching temporarily if tar error persists
+          # Recommended: Use 'cache: false' for one run if caching errors persist
 
       - name: Download Go Modules
         run: |
@@ -41,7 +41,6 @@ jobs:
       - name: Run Unit Tests
         run: |
           echo "::group::Running Tests"
-          # Fail immediately if tests fail
           go test -v ./...
           echo "::endgroup::"
 
@@ -59,8 +58,6 @@ jobs:
           set -euo pipefail
           echo "::group::Creating Zip Artifact"
           zip lambda-deployment-package.zip bootstrap
-          echo "Artifact created: lambda-deployment-package.zip"
-          # Set output path for deployment job (optional, used here for consistency)
           echo "artifact-path=lambda-deployment-package.zip" >> $GITHUB_OUTPUT
           echo "::endgroup::"
 
@@ -71,13 +68,14 @@ jobs:
           path: lambda-deployment-package.zip
 
 ---
-## 💻 2. CD: Get Config and Deploy to Matrix
----
+# ------------------------------------
+# 2. CD: Configure and Deploy
+# ------------------------------------
   deploy-multi-region:
     needs: test-and-build
     runs-on: ubuntu-latest
 
-    # 2.1. Dynamic Configuration Step (Runs ONCE)
+    # 2.1. Dynamic Configuration Setup (Runs ONCE to generate matrix)
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -90,19 +88,17 @@ jobs:
       - name: Get Multi-Region Configuration
         id: config
         run: |
-          # Fails instantly if 'go run' or pipe fails
           set -euo pipefail
           echo "::group::Executing Configuration Reader"
-
-          # ⬅️ CRITICAL FIX 1: Run the script from its new location
+          # CRITICAL: Path corrected to use your internal package
           CONFIG_JSON=$(go run ./internal/configuration/config_reader.go)
 
           if [[ -z "$CONFIG_JSON" || "$CONFIG_JSON" == "[]" ]]; then
-            echo "::error title=Config Error::Configuration reader returned empty or invalid JSON."
+            echo "::error title=Config Error::Configuration reader returned empty or invalid JSON. Cannot proceed."
             exit 1
           fi
 
-          echo "✅ Matrix JSON generated: $CONFIG_JSON"
+          echo "✅ Matrix JSON generated successfully. Outputting to strategy."
           echo "config-matrix=$CONFIG_JSON" >> $GITHUB_OUTPUT
           echo "::endgroup::"
 
@@ -113,7 +109,6 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # matrix_config is the array: [{name: "us-east-1", alias: "prod", function_name: "..."}]
         region_config: ${{ fromJson(steps.config.outputs.config-matrix) }}
 
     steps:
@@ -123,21 +118,32 @@ jobs:
           name: lambda-package
           path: . # Download to current root directory
 
+      # ⬅️ CRITICAL FIX: Convert hyphens to underscores for variable lookup
+      - name: Convert Region Name for Variable Lookup
+        id: region_convert
+        run: |
+          set -euo pipefail
+          # Takes region name (e.g., 'us-east-1') and converts to uppercase with underscores (e.g., 'US_EAST_1')
+          REGION_VAR_NAME=$(echo "${{ matrix.region_config.name }}" | tr '[:lower:]-' '[:upper:]_')
+
+          echo "Original region name: ${{ matrix.region_config.name }}"
+          echo "Converted variable suffix: $REGION_VAR_NAME"
+
+          echo "region_var_name=$REGION_VAR_NAME" >> $GITHUB_OUTPUT
+
+
       - name: Configure AWS Credentials (OIDC Role Assumption)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          # ⬅️ CRITICAL FIX 2: Dynamic ARN retrieval using your naming convention
-          # Note: Assumes the ARNs are stored in GitHub Variables (vars) or Secrets
-          role-to-assume: ${{ vars[format('AWS_ROLE_{0}', matrix.region_config.name)] }}
+          # CRITICAL: Dynamic lookup using the fixed underscore name: AWS_ROLE_US_EAST_1
+          # Assumes the ARN is stored in a GitHub Variable (`vars`)
+          role-to-assume: ${{ vars[format('AWS_ROLE_{0}', steps.region_convert.outputs.region_var_name)] }}
 
-          # The region to target is taken from the config matrix
           aws-region: ${{ matrix.region_config.name }}
-
-          # Use a unique session name
           role-session-name: GitHubActionsSession-${{ github.sha }}-${{ matrix.region_config.name }}
         env:
-          # Log the ARN being used for debugging (AWS_REGION is automatically set by the action)
-          USED_ROLE: ${{ vars[format('AWS_ROLE_{0}', matrix.region_config.name)] }}
+          # Logging the key used to try and find the ARN (for debugging)
+          USED_ROLE_KEY: ${{ format('AWS_ROLE_{0}', steps.region_convert.outputs.region_var_name) }}
 
       - name: 🚀 Deploy Lambda Code to ${{ matrix.region_config.name }} (${{ matrix.region_config.alias }})
         run: |
@@ -147,12 +153,12 @@ jobs:
           LAMBDA_FUNCTION_NAME="${{ matrix.region_config.function_name }}"
           ZIP_FILE="lambda-deployment-package.zip"
 
-          echo "Attempting to deploy $LAMBDA_FUNCTION_NAME in ${{ matrix.region_config.name }}"
-
           if [ ! -f "$ZIP_FILE" ]; then
             echo "::error title=Deployment Package Missing::The artifact '$ZIP_FILE' was not found after download."
             exit 1
           fi
+
+          echo "Attempting to deploy $LAMBDA_FUNCTION_NAME..."
 
           aws lambda update-function-code \
             --function-name "$LAMBDA_FUNCTION_NAME" \
