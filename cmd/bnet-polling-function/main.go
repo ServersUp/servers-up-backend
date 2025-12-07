@@ -16,7 +16,7 @@ func HandleRequest(ctx context.Context, event Event) (string, error) {
 	log.Printf("Processing request for ID: %s", event.ID)
 	// Example of using shared common logic
 	user, _ := common.GetData(event.ID)
-	return "Successfully processed user: " + user.Email, nil
+	return "Successfully processed user with data: " + user.Email, nil
 }
 
 func main() {
