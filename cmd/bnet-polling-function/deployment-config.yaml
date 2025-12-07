@@ -1,0 +1,6 @@
+# /cmd/bnet-polling-function/deploy_config.yml
+
+function_name: BNetPollingLambda
+regions:
+  - name: us-east-1
+    alias: production
