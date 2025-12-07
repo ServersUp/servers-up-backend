@@ -2,35 +2,30 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 
-	"github.com/ServersUp/servers-up-backend/internal/common"
+	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
 )
 
-type Event struct {
-	ID string `json:"id"`
-}
-
-func HandleRequest(ctx context.Context, event Event) (string, error) {
+func HandleRequest(ctx context.Context, event events.CloudWatchEvent) (string, error) {
 	// 1. First log message (visible)
 	log.Printf("Processing request for ID: %s", event.ID)
 
-	user, err := common.GetData(event.ID)
+	// 1. Use json.Marshal to convert the struct into a byte slice
+	// We use the event struct directly.
+	jsonBytes, err := json.Marshal(event)
 
-	// 2. CHECK FOR ERROR
 	if err != nil {
-		// Now you will see this error message in your logs!
-		log.Printf("ERROR: Failed to retrieve data for ID %s: %v", event.ID, err)
-
-		// This causes the Lambda to fail gracefully and logs the complete output
+		log.Printf("ERROR marshaling event to JSON: %v", err)
 		return "", err
 	}
 
-	// 3. Success log (now this will be reached on success)
-	log.Printf("Successfully retrieved user: %s", user.Email)
+	// 2. Convert the byte slice to a string
+	jsonString := string(jsonBytes)
 
-	return "Successfully processed user with data: " + user.Email, nil
+	return "Successfully processed event with data: " + jsonString, nil
 }
 
 func main() {
