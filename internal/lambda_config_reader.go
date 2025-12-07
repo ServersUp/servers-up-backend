@@ -26,7 +26,7 @@ type Config struct {
 }
 
 func main() {
-	configPath := filepath.Join("cmd", "bnet-polling-function", "deploy_config.yml")
+	configPath := filepath.Join("cmd", "bnet-polling-function", "deployment-config.yml")
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		log.Fatalf("failed to read config file %s: %v", configPath, err)
