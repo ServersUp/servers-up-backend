@@ -24,7 +24,8 @@ type Config struct {
 
 func main() {
 	// Path to YAML remains relative to the repository root (where the CI runs 'go run')
-	configPath := filepath.Join("cmd", "bnet-polling-function", "deployment_config.yml")
+	cwd, err := os.Getwd()
+	configPath := filepath.Join(cwd, "cmd", "bnet-polling-function", "deployment-config.yaml")
 
 	data, err := os.ReadFile(configPath)
 	if err != nil {
