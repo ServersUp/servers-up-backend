@@ -110,11 +110,14 @@ jobs:
       - name: Configure AWS Credentials (OIDC Role Assumption)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          # Dynamic lookup using the fixed underscore name: AWS_ROLE_US_EAST_1
+          # The ARN is pulled from your vars using the region name conversion
           role-to-assume: ${{ vars[format('AWS_ROLE_{0}', steps.region_convert.outputs.region_var_name)] }} 
 
+          # The region to target is taken from the config matrix
           aws-region: ${{ matrix.region_config.name }}
-          role-session-name: GitHubActionsSession-${{ github.sha }}-${{ matrix.region_config.name }}
+
+          # USE THE SHORT SHA TO SATISFY THE 64-CHARACTER LIMIT
+          role-session-name: gh-deploy-${{ github.sha }}
         
       - name: 🚀 Deploy Lambda Code to ${{ matrix.region_config.name }} (${{ matrix.region_config.alias }})
         run: |
