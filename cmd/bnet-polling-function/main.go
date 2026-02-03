@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
@@ -179,32 +181,51 @@ func HandleRequest(ctx context.Context, event events.CloudWatchEvent) (string, e
 		return "", fmt.Errorf("failed to get token: %w", err)
 	}
 
-	httpClient := &http.Client{}
+	httpClient := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+
+	semaphore := make(chan struct{}, 5)
+	var wg sync.WaitGroup
 
 	for _, realm := range cfg.Realms {
-		// Namespace is required! For US it's 'dynamic-us'
-		url := fmt.Sprintf("https://us.api.blizzard.com/data/wow/connected-realm/%d?namespace=dynamic-us&locale=%s", realm.ConnectedRealmID, cfg.Locale)
+		wg.Add(1)
 
-		req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
-		req.Header.Set("Authorization", "Bearer "+token)
+		// START A GOROUTINE
+		go func(r RealmConfig) {
+			defer wg.Done()
 
-		resp, err := httpClient.Do(req)
-		if err != nil {
-			log.Printf("❌ Failed to poll %s: %v", realm.Name, err)
-			continue
-		}
-		defer resp.Body.Close()
+			// ACQUIRE: This blocks if 5 workers are already active
+			semaphore <- struct{}{}
+			// RELEASE: This executes as soon as this goroutine finishes
+			defer func() { <-semaphore }()
 
-		connectedRealmResponse := &ConnectedRealmResponse{}
+			url := fmt.Sprintf("https://us.api.blizzard.com/data/wow/connected-realm/%d?namespace=dynamic-us&locale=%s", r.ConnectedRealmID, cfg.Locale)
 
-		if err := json.NewDecoder(resp.Body).Decode(&connectedRealmResponse); err != nil {
-			return "", err
-		}
+			req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
+			req.Header.Set("Authorization", "Bearer "+token)
+			req.Header.Set("Connection", "close") // Use the fix we discussed!
 
-		for _, realmDetail := range connectedRealmResponse.Realms {
-			log.Printf("Polled %s: Status %s", realmDetail.Name, connectedRealmResponse.Status.Name)
-		}
+			resp, err := httpClient.Do(req)
+			if err != nil {
+				log.Printf("❌ Failed to poll %s: %v", r.Name, err)
+				return // Use return, not continue, inside a goroutine
+			}
+			defer resp.Body.Close()
+
+			// ... Decode and process ...
+			var connectedRealmResponse ConnectedRealmResponse
+			if err := json.NewDecoder(resp.Body).Decode(&connectedRealmResponse); err != nil {
+				log.Printf("❌ JSON error for %s: %v", r.Name, err)
+				return
+			}
+
+			log.Printf("Polled %s: Status %s", r.Name, connectedRealmResponse.Status.Name)
+
+		}(realm) // Pass the realm into the goroutine to avoid closure issues
 	}
+
+	wg.Wait() // Now this will correctly wait for all 80+ goroutines to finish
 
 	jsonString := string(jsonBytes)
 
