@@ -25,22 +25,91 @@ var (
 )
 
 type Config struct {
-	Region                 string  `json:"region"`
-	Locale                 string  `json:"locale"`
-	Realms                 []Realm `json:"realms"`
-	PollingIntervalSeconds int     `json:"polling_interval_seconds"`
+	Region                 string        `json:"region"`
+	Locale                 string        `json:"locale"`
+	Realms                 []RealmConfig `json:"realms"`
+	PollingIntervalSeconds int           `json:"polling_interval_seconds"`
 }
 
-type Realm struct {
+type RealmConfig struct {
 	Name             string `json:"name"`
 	Slug             string `json:"slug"`
-	ConnectedRealmID string `json:"connected_realm_id"`
+	ConnectedRealmID int    `json:"connected_realm_id"`
 }
 
 type BNetTokenResponse struct {
 	AccessToken string `json:"access_token"`
 	TokenType   string `json:"token_type"`
 	ExpiresIn   int    `json:"expires_in"`
+}
+
+type ConnectedRealmResponse struct {
+	Links              Links              `json:"_links"`
+	ID                 int                `json:"id"`
+	HasQueue           bool               `json:"has_queue"`
+	Status             Status             `json:"status"`
+	Population         Population         `json:"population"`
+	Realms             []RealmDetail      `json:"realms"`
+	MythicLeaderboards MythicLeaderboards `json:"mythic_leaderboards"`
+	Auctions           Auctions           `json:"auctions"`
+}
+
+type Links struct {
+	Self Self `json:"self"`
+}
+
+type Self struct {
+	Href string `json:"href"`
+}
+
+type Status struct {
+	Type string `json:"type"` // "UP" or "DOWN"
+	Name string `json:"name"`
+}
+
+type Population struct {
+	Type string `json:"type"` // "FULL", "HIGH", etc.
+	Name string `json:"name"`
+}
+
+type RealmDetail struct {
+	ID             int            `json:"id"`
+	Region         Region         `json:"region"`
+	ConnectedRealm ConnectedRealm `json:"connected_realm"`
+	Name           string         `json:"name"`
+	Category       string         `json:"category"`
+	Locale         string         `json:"locale"`
+	Timezone       string         `json:"timezone"`
+	Type           Type           `json:"type"`
+	IsTournament   bool           `json:"is_tournament"`
+	Slug           string         `json:"slug"`
+}
+
+type Region struct {
+	Key  Key    `json:"key"`
+	Name string `json:"name"`
+	ID   int    `json:"id"`
+}
+
+type Key struct {
+	Href string `json:"href"`
+}
+
+type ConnectedRealm struct {
+	Href string `json:"href"`
+}
+
+type Type struct {
+	Type string `json:"type"`
+	Name string `json:"name"`
+}
+
+type MythicLeaderboards struct {
+	Href string `json:"href"`
+}
+
+type Auctions struct {
+	Href string `json:"href"`
 }
 
 func init() {
@@ -114,7 +183,7 @@ func HandleRequest(ctx context.Context, event events.CloudWatchEvent) (string, e
 
 	for _, realm := range cfg.Realms {
 		// Namespace is required! For US it's 'dynamic-us'
-		url := fmt.Sprintf("https://us.api.blizzard.com/data/wow/connected-realm/%s?namespace=dynamic-us&locale=%s", realm.ConnectedRealmID, cfg.Locale)
+		url := fmt.Sprintf("https://us.api.blizzard.com/data/wow/connected-realm/%d?namespace=dynamic-us&locale=%s", realm.ConnectedRealmID, cfg.Locale)
 
 		req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
 		req.Header.Set("Authorization", "Bearer "+token)
@@ -126,7 +195,22 @@ func HandleRequest(ctx context.Context, event events.CloudWatchEvent) (string, e
 		}
 		defer resp.Body.Close()
 
-		log.Printf("✅ Polled %s: Status %d", realm.Name, resp.StatusCode)
+		connectedRealmResponse := &ConnectedRealmResponse{}
+
+		if err := json.NewDecoder(resp.Body).Decode(&connectedRealmResponse); err != nil {
+			return "", err
+		}
+
+		prettyJSON, err := json.MarshalIndent(connectedRealmResponse, "", "  ")
+		if err != nil {
+			log.Fatalf("Error marshaling to JSON: %s", err)
+		}
+
+		fmt.Println(string(prettyJSON))
+
+		for _, realmDetail := range connectedRealmResponse.Realms {
+			log.Printf("✅ Polled %s: Status %s", realmDetail.Name, connectedRealmResponse.Status.Name)
+		}
 	}
 
 	jsonString := string(jsonBytes)
