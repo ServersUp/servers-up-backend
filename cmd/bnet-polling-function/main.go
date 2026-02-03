@@ -201,15 +201,8 @@ func HandleRequest(ctx context.Context, event events.CloudWatchEvent) (string, e
 			return "", err
 		}
 
-		prettyJSON, err := json.MarshalIndent(connectedRealmResponse, "", "  ")
-		if err != nil {
-			log.Fatalf("Error marshaling to JSON: %s", err)
-		}
-
-		fmt.Println(string(prettyJSON))
-
 		for _, realmDetail := range connectedRealmResponse.Realms {
-			log.Printf("✅ Polled %s: Status %s", realmDetail.Name, connectedRealmResponse.Status.Name)
+			log.Printf("Polled %s: Status %s", realmDetail.Name, connectedRealmResponse.Status.Name)
 		}
 	}
 
