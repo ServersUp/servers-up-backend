@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/http"
+	"net/url"
 	"os"
+	"strings"
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
@@ -29,8 +32,15 @@ type Config struct {
 }
 
 type Realm struct {
-	Name string `json:"name"`
-	Slug string `json:"slug"`
+	Name             string `json:"name"`
+	Slug             string `json:"slug"`
+	ConnectedRealmID string `json:"connected_realm_id"`
+}
+
+type BNetTokenResponse struct {
+	AccessToken string `json:"access_token"`
+	TokenType   string `json:"token_type"`
+	ExpiresIn   int    `json:"expires_in"`
 }
 
 func init() {
@@ -44,11 +54,8 @@ func init() {
 }
 
 func HandleRequest(ctx context.Context, event events.CloudWatchEvent) (string, error) {
-	// 1. First log message (visible)
 	log.Printf("Processing request for ID: %s", event.ID)
 
-	// 1. Use json.Marshal to convert the struct into a byte slice
-	// We use the event struct directly.
 	jsonBytes, err := json.Marshal(event)
 
 	if err != nil {
@@ -59,7 +66,6 @@ func HandleRequest(ctx context.Context, event events.CloudWatchEvent) (string, e
 	clientIDParameterPath := os.Getenv("BNET_CLIENT_ID_PATH")
 	clientSecretParameterPath := os.Getenv("BNET_CLIENT_SECRET_PATH")
 
-	// 2. Call SSM for the Client ID
 	clientIdParameterOutput, err := ssmClient.GetParameter(ctx, &ssm.GetParameterInput{
 		Name:           aws.String(clientIDParameterPath),
 		WithDecryption: aws.Bool(true),
@@ -70,15 +76,13 @@ func HandleRequest(ctx context.Context, event events.CloudWatchEvent) (string, e
 		return "", err
 	}
 
-	val := *clientIdParameterOutput.Parameter.Value
-	log.Printf("Successfully fetched Client ID: %s", val)
-
 	clientSecretParameterOutput, err := ssmClient.GetParameter(ctx, &ssm.GetParameterInput{
 		Name:           aws.String(clientSecretParameterPath),
 		WithDecryption: aws.Bool(true),
 	})
 
-	_ = clientSecretParameterOutput
+	clientID := *clientIdParameterOutput.Parameter.Value
+	clientSecret := *clientSecretParameterOutput.Parameter.Value
 
 	if err != nil {
 		log.Printf("Couldn't retrieve Battle Net Client Secret Parameter: %v", err)
@@ -96,26 +100,67 @@ func HandleRequest(ctx context.Context, event events.CloudWatchEvent) (string, e
 	}
 	defer obj.Body.Close()
 
-	// 2. Unmarshal into your Config struct (or a map if you're feeling lazy)
-	var cfg Config
+	cfg := &Config{}
 	if err := json.Unmarshal(bodyBytes, &cfg); err != nil {
 		return "", fmt.Errorf("failed to unmarshal config: %w", err)
 	}
 
-	// 3. Marshal it back into a PRETTY byte slice
-	// The "" is the prefix, and "  " (two spaces) is the indent
-	prettyJSON, err := json.MarshalIndent(cfg, "", "  ")
+	token, err := getBNetToken(ctx, clientID, clientSecret)
 	if err != nil {
-		return "", fmt.Errorf("failed to generate pretty JSON: %w", err)
+		return "", fmt.Errorf("failed to get token: %w", err)
 	}
 
-	// 4. Print that masterpiece! 🎨
-	log.Printf("Loaded Config:\n%s", string(prettyJSON))
+	httpClient := &http.Client{}
 
-	// 3. Convert the byte slice to a string
+	for _, realm := range cfg.Realms {
+		// Namespace is required! For US it's 'dynamic-us'
+		url := fmt.Sprintf("https://us.api.blizzard.com/data/wow/connected-realm/%s?namespace=dynamic-us&locale=%s", realm.ConnectedRealmID, cfg.Locale)
+
+		req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			log.Printf("❌ Failed to poll %s: %v", realm.Name, err)
+			continue
+		}
+		defer resp.Body.Close()
+
+		log.Printf("✅ Polled %s: Status %d", realm.Name, resp.StatusCode)
+	}
+
 	jsonString := string(jsonBytes)
 
 	return "Successfully processed event with data: " + jsonString, nil
+}
+
+func getBNetToken(ctx context.Context, id, secret string) (string, error) {
+	data := url.Values{}
+	data.Set("grant_type", "client_credentials")
+
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://oauth.battle.net/token", strings.NewReader(data.Encode()))
+	if err != nil {
+		return "", err
+	}
+
+	req.SetBasicAuth(id, secret)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	// 4. Decode the result
+	authResp := &BNetTokenResponse{}
+
+	if err := json.NewDecoder(resp.Body).Decode(&authResp); err != nil {
+		return "", err
+	}
+
+	return authResp.AccessToken, nil
 }
 
 func main() {
