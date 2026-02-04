@@ -17,6 +17,8 @@ import (
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 )
@@ -24,6 +26,13 @@ import (
 var (
 	ssmClient *ssm.Client
 	s3Client  *s3.Client
+	ddbClient *dynamodb.Client
+
+	BNET_CLIENT_ID_PATH     string
+	BNET_CLIENT_SECRET_PATH string
+	CONFIG_BUCKET           string
+	BNET_SERVER_CONFIG_PATH string
+	DDB_TABLE_NAME          string
 )
 
 type Config struct {
@@ -114,6 +123,26 @@ type Auctions struct {
 	Href string `json:"href"`
 }
 
+type GameServerStatus struct {
+	// 🔑 Primary Key
+	GameID   string `json:"gameId" dynamodbav:"gameId"`
+	ServerID string `json:"serverId" dynamodbav:"serverId"`
+
+	// 🌍 Identity / metadata
+	Provider string `json:"provider" dynamodbav:"provider"` // e.g. battlenet
+	Region   string `json:"region" dynamodbav:"region"`     // us, eu, kr, etc
+
+	// 📊 State
+	Status string `json:"status" dynamodbav:"status"` // UP | DOWN | DEGRADED
+
+	// ⏱ Polling & freshness
+	LastUpdatedAt int64 `json:"lastUpdatedAt" dynamodbav:"lastUpdatedAt"` // unix epoch seconds
+	PolledAt      int64 `json:"polledAt" dynamodbav:"polledAt"`           // always updated
+
+	// 🧠 Optional / extensible fields
+	Meta map[string]any `json:"meta,omitempty" dynamodbav:"meta,omitempty"`
+}
+
 func init() {
 	// Initialize the SDK once during the "cold start"
 	cfg, err := config.LoadDefaultConfig(context.TODO())
@@ -122,6 +151,13 @@ func init() {
 	}
 	ssmClient = ssm.NewFromConfig(cfg)
 	s3Client = s3.NewFromConfig(cfg)
+	ddbClient = dynamodb.NewFromConfig(cfg)
+
+	BNET_CLIENT_ID_PATH = os.Getenv("BNET_CLIENT_ID_PATH")
+	BNET_CLIENT_SECRET_PATH = os.Getenv("BNET_CLIENT_SECRET_PATH")
+	CONFIG_BUCKET = os.Getenv("CONFIG_BUCKET")
+	BNET_SERVER_CONFIG_PATH = os.Getenv("BNET_SERVER_CONFIG_PATH")
+	DDB_TABLE_NAME = os.Getenv("DDB_TABLE_NAME")
 }
 
 func HandleRequest(ctx context.Context, event events.CloudWatchEvent) (string, error) {
@@ -134,8 +170,8 @@ func HandleRequest(ctx context.Context, event events.CloudWatchEvent) (string, e
 		return "", err
 	}
 
-	clientIDParameterPath := os.Getenv("BNET_CLIENT_ID_PATH")
-	clientSecretParameterPath := os.Getenv("BNET_CLIENT_SECRET_PATH")
+	clientIDParameterPath := os.Getenv(BNET_CLIENT_ID_PATH)
+	clientSecretParameterPath := os.Getenv(BNET_CLIENT_SECRET_PATH)
 
 	clientIdParameterOutput, err := ssmClient.GetParameter(ctx, &ssm.GetParameterInput{
 		Name:           aws.String(clientIDParameterPath),
@@ -161,8 +197,8 @@ func HandleRequest(ctx context.Context, event events.CloudWatchEvent) (string, e
 	}
 
 	obj, err := s3Client.GetObject(ctx, &s3.GetObjectInput{
-		Bucket: aws.String(os.Getenv("CONFIG_BUCKET")),
-		Key:    aws.String(os.Getenv("BNET_SERVER_CONFIG_PATH")),
+		Bucket: aws.String(CONFIG_BUCKET),
+		Key:    aws.String(BNET_SERVER_CONFIG_PATH),
 	})
 
 	bodyBytes, err := io.ReadAll(obj.Body)
@@ -185,7 +221,7 @@ func HandleRequest(ctx context.Context, event events.CloudWatchEvent) (string, e
 		Timeout: 30 * time.Second,
 	}
 
-	semaphore := make(chan struct{}, 5)
+	semaphore := make(chan struct{}, 10)
 	var wg sync.WaitGroup
 
 	for _, realm := range cfg.Realms {
@@ -219,8 +255,7 @@ func HandleRequest(ctx context.Context, event events.CloudWatchEvent) (string, e
 				log.Printf("❌ JSON error for %s: %v", r.Name, err)
 				return
 			}
-
-			log.Printf("Polled %s: Status %s", r.Name, connectedRealmResponse.Status.Name)
+			saveToDB(ctx, r.ConnectedRealmID, connectedRealmResponse.Status.Type)
 
 		}(realm) // Pass the realm into the goroutine to avoid closure issues
 	}
@@ -259,6 +294,41 @@ func getBNetToken(ctx context.Context, id, secret string) (string, error) {
 	}
 
 	return authResp.AccessToken, nil
+}
+
+func saveToDB(ctx context.Context, connectedID int, status string) {
+	now := time.Now().Unix()
+	serverID := fmt.Sprintf("battlenet#us#%d", connectedID)
+	serverStatus := GameServerStatus{
+		GameID:        "wow",    // Partition Key
+		ServerID:      serverID, // Sort Key
+		Provider:      "battlenet",
+		Region:        "us",
+		Status:        status,
+		LastUpdatedAt: now, // TODO: Update this only if status changes
+		PolledAt:      now,
+		Meta: map[string]any{
+			"env": "production",
+		},
+	}
+
+	// 2. Marshal the Go struct into a map of AttributeValues
+	// This respects your `dynamodbav` tags perfectly.
+	item, err := attributevalue.MarshalMap(serverStatus)
+	if err != nil {
+		log.Printf("❌ Failed to marshal status for %s: %v", serverID, err)
+		return
+	}
+
+	// 3. PutItem call
+	_, err = ddbClient.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName: aws.String(DDB_TABLE_NAME),
+		Item:      item,
+	})
+
+	if err != nil {
+		log.Printf("❌ DynamoDB Error for server %s: %v", serverID, err)
+	}
 }
 
 func main() {
