@@ -170,11 +170,8 @@ func HandleRequest(ctx context.Context, event events.CloudWatchEvent) (string, e
 		return "", err
 	}
 
-	clientIDParameterPath := os.Getenv(BNET_CLIENT_ID_PATH)
-	clientSecretParameterPath := os.Getenv(BNET_CLIENT_SECRET_PATH)
-
 	clientIdParameterOutput, err := ssmClient.GetParameter(ctx, &ssm.GetParameterInput{
-		Name:           aws.String(clientIDParameterPath),
+		Name:           aws.String(BNET_CLIENT_ID_PATH),
 		WithDecryption: aws.Bool(true),
 	})
 
@@ -184,7 +181,7 @@ func HandleRequest(ctx context.Context, event events.CloudWatchEvent) (string, e
 	}
 
 	clientSecretParameterOutput, err := ssmClient.GetParameter(ctx, &ssm.GetParameterInput{
-		Name:           aws.String(clientSecretParameterPath),
+		Name:           aws.String(BNET_CLIENT_SECRET_PATH),
 		WithDecryption: aws.Bool(true),
 	})
 
