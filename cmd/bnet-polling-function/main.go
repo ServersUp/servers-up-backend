@@ -11,6 +11,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/aws/aws-lambda-go/events"
@@ -221,6 +222,13 @@ func HandleRequest(ctx context.Context, event events.CloudWatchEvent) (string, e
 	semaphore := make(chan struct{}, 10)
 	var wg sync.WaitGroup
 
+	var (
+		successCount int32
+		errorCount   int32
+		upCount      int32
+		downCount    int32
+	)
+
 	for _, realm := range cfg.Realms {
 		wg.Add(1)
 
@@ -242,6 +250,7 @@ func HandleRequest(ctx context.Context, event events.CloudWatchEvent) (string, e
 			resp, err := httpClient.Do(req)
 			if err != nil {
 				log.Printf("❌ Failed to poll %s: %v", r.Name, err)
+				atomic.AddInt32(&errorCount, 1)
 				return // Use return, not continue, inside a goroutine
 			}
 			defer resp.Body.Close()
@@ -250,14 +259,31 @@ func HandleRequest(ctx context.Context, event events.CloudWatchEvent) (string, e
 			var connectedRealmResponse ConnectedRealmResponse
 			if err := json.NewDecoder(resp.Body).Decode(&connectedRealmResponse); err != nil {
 				log.Printf("❌ JSON error for %s: %v", r.Name, err)
+				atomic.AddInt32(&errorCount, 1)
 				return
 			}
-			saveToDB(ctx, r.ConnectedRealmID, connectedRealmResponse.Status.Type)
+
+			statusType := connectedRealmResponse.Status.Type
+			if statusType == "UP" {
+				atomic.AddInt32(&upCount, 1)
+			} else if statusType == "DOWN" {
+				atomic.AddInt32(&downCount, 1)
+			}
+
+			saveToDB(ctx, r.ConnectedRealmID, statusType)
+			atomic.AddInt32(&successCount, 1)
 
 		}(realm) // Pass the realm into the goroutine to avoid closure issues
 	}
 
 	wg.Wait() // Now this will correctly wait for all 80+ goroutines to finish
+
+	log.Printf("📊 Polling Summary: Successful: %d | UP: %d | DOWN: %d | Errors: %d",
+		atomic.LoadInt32(&successCount),
+		atomic.LoadInt32(&upCount),
+		atomic.LoadInt32(&downCount),
+		atomic.LoadInt32(&errorCount),
+	)
 
 	jsonString := string(jsonBytes)
 
