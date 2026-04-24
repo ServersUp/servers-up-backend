@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -27,7 +27,8 @@ type Handler struct {
 func NewHandler(ctx context.Context) *Handler {
 	cfg, err := awsconfig.LoadDefaultConfig(ctx)
 	if err != nil {
-		log.Fatalf("unable to load AWS SDK config: %v", err)
+		slog.Error("unable to load AWS SDK config", "error", err)
+		os.Exit(1)
 	}
 
 	return &Handler{
@@ -37,7 +38,7 @@ func NewHandler(ctx context.Context) *Handler {
 }
 
 func (h *Handler) HandleRequest(ctx context.Context, event events.CloudWatchEvent) (string, error) {
-	log.Printf("Starting polling execution for ID: %s", event.ID)
+	slog.Info("Starting polling execution", "eventID", event.ID)
 
 	// Fetch credentials and server configuration from AWS.
 	clientID, err := h.configProvider.GetSecret(ctx, os.Getenv("BNET_CLIENT_ID_PATH"))
@@ -59,7 +60,7 @@ func (h *Handler) HandleRequest(ctx context.Context, event events.CloudWatchEven
 	// Initialize the Battle.net client and authenticate.
 	bnetClient := bnet.NewClient(clientID, clientSecret)
 	if err := bnetClient.Authenticate(ctx); err != nil {
-		log.Printf("failed to authenticate with Battle.net: %v", err)
+		slog.Error("failed to authenticate with Battle.net", "error", err)
 		return "", err
 	}
 
@@ -85,7 +86,7 @@ func (h *Handler) HandleRequest(ctx context.Context, event events.CloudWatchEven
 
 			realmStatus, err := bnetClient.GetConnectedRealmStatus(ctx, bnetConfig.Region, r.ConnectedRealmID, bnetConfig.Locale)
 			if err != nil {
-				log.Printf("failed to poll realm %s: %v", r.Name, err)
+				slog.Error("failed to poll realm", "realm", r.Name, "error", err)
 				atomic.AddInt32(&errorCount, 1)
 				return
 			}
@@ -99,7 +100,7 @@ func (h *Handler) HandleRequest(ctx context.Context, event events.CloudWatchEven
 
 			// Store the status using the generalized database layer.
 			if err := h.database.SaveServerStatus(ctx, "wow", "battlenet", bnetConfig.Region, r.ConnectedRealmID, statusType); err != nil {
-				log.Printf("failed to save status for realm %s: %v", r.Name, err)
+				slog.Error("failed to save status for realm", "realm", r.Name, "error", err)
 			}
 
 			atomic.AddInt32(&successCount, 1)
@@ -108,17 +109,21 @@ func (h *Handler) HandleRequest(ctx context.Context, event events.CloudWatchEven
 
 	wg.Wait()
 
-	log.Printf("Polling Summary | Successful: %d | UP: %d | DOWN: %d | Errors: %d",
-		atomic.LoadInt32(&successCount),
-		atomic.LoadInt32(&upCount),
-		atomic.LoadInt32(&downCount),
-		atomic.LoadInt32(&errorCount),
+	slog.Info("Polling Summary",
+		"successful", atomic.LoadInt32(&successCount),
+		"up", atomic.LoadInt32(&upCount),
+		"down", atomic.LoadInt32(&downCount),
+		"errors", atomic.LoadInt32(&errorCount),
 	)
 
 	return "Polling completed successfully", nil
 }
 
 func main() {
+	// Configure slog to output JSON to stdout. This is the best practice for 
+	// AWS Lambda as it allows CloudWatch Insights to parse logs automatically.
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+
 	handler := NewHandler(context.Background())
 	lambda.Start(handler.HandleRequest)
 }

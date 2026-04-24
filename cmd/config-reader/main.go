@@ -2,7 +2,7 @@ package main
 
 import (
 	"encoding/json"
-	"log"
+	"log/slog"
 	"os"
 
 	"gopkg.in/yaml.v3"
@@ -24,18 +24,21 @@ type DeploymentConfig struct {
 
 func main() {
 	if len(os.Args) < 2 {
-		log.Fatalf("usage: config-reader <config-path>")
+		slog.Error("usage: config-reader <config-path>")
+		os.Exit(1)
 	}
 
 	configPath := os.Args[1]
 	data, err := os.ReadFile(configPath)
 	if err != nil {
-		log.Fatalf("failed to read config file %s: %v", configPath, err)
+		slog.Error("failed to read config file", "path", configPath, "error", err)
+		os.Exit(1)
 	}
 
 	var cfg DeploymentConfig
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		log.Fatalf("failed to unmarshal YAML: %v", err)
+		slog.Error("failed to unmarshal YAML", "error", err)
+		os.Exit(1)
 	}
 
 	// Build the deployment matrix by injecting global properties into each target.
@@ -47,7 +50,8 @@ func main() {
 
 	jsonOutput, err := json.Marshal(deploymentMatrix)
 	if err != nil {
-		log.Fatalf("failed to marshal to JSON: %v", err)
+		slog.Error("failed to marshal to JSON", "error", err)
+		os.Exit(1)
 	}
 
 	os.Stdout.Write(jsonOutput)
