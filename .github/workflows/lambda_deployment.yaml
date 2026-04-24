@@ -67,8 +67,8 @@ jobs:
         run: |
           set -euo pipefail
           echo "::group::Executing Configuration Reader"
-          # CRITICAL: Path corrected to use your internal package
-          CONFIG_JSON=$(go run ./internal/configuration/lambda_config_reader.go)
+          # Generate the deployment matrix from the YAML configuration
+          CONFIG_JSON=$(go run ./cmd/config-reader/main.go ./cmd/bnet-polling-function/deployment-config.yaml)
 
           if [[ -z "$CONFIG_JSON" || "$CONFIG_JSON" == "[]" ]]; then
             echo "::error title=Config Error::Configuration reader returned empty or invalid JSON."
