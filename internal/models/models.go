@@ -24,3 +24,16 @@ type GameServerStatus struct {
 	// Meta allows for provider-specific or extensible metadata without breaking the schema.
 	Meta map[string]any `json:"meta,omitempty" dynamodbav:"meta,omitempty"`
 }
+
+// Subscription represents a Discord notification target for a game server.
+type Subscription struct {
+	// ServerID is the hash key (e.g., "battlenet#us#11").
+	ServerID string `json:"server_id" dynamodbav:"server_id"`
+	// SubscriptionID is a unique identifier for this specific channel/role combo.
+	SubscriptionID string `json:"subscription_id" dynamodbav:"subscription_id"`
+
+	GuildID   string `json:"guild_id" dynamodbav:"guild_id"`
+	ChannelID string `json:"channel_id" dynamodbav:"channel_id"`
+	Mention   string `json:"mention" dynamodbav:"mention"`
+}
+
