@@ -70,8 +70,11 @@ func (h *Handler) HandleRequest(ctx context.Context, request events.LambdaFuncti
 	signature := request.Headers["x-signature-ed25519"]
 	timestamp := request.Headers["x-signature-timestamp"]
 
+	// Log incoming request details for troubleshooting
+	slog.Debug("Incoming Discord Request", "sig", signature, "ts", timestamp, "body", request.Body)
+
 	if err := discord.VerifySignature(h.discordPublicKey, signature, timestamp, request.Body); err != nil {
-		slog.Warn("Invalid request signature", "error", err)
+		slog.Warn("Invalid request signature", "error", err, "sig", signature, "ts", timestamp)
 		return events.LambdaFunctionURLResponse{StatusCode: http.StatusUnauthorized, Body: "Invalid signature"}, nil
 	}
 
@@ -231,7 +234,7 @@ func (h *Handler) errorResponse(msg string) (events.LambdaFunctionURLResponse, e
 }
 
 func main() {
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	handler := NewHandler(context.Background())
 	lambda.Start(handler.HandleRequest)
 }
