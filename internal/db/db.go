@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 )
 
 type Database struct {
@@ -56,4 +57,66 @@ func (db *Database) SaveServerStatus(ctx context.Context, gameID, provider, regi
 	}
 
 	return nil
+}
+
+// AddSubscription adds a new Discord channel subscription for a specific server.
+func (db *Database) AddSubscription(ctx context.Context, sub models.Subscription) error {
+	item, err := attributevalue.MarshalMap(sub)
+	if err != nil {
+		return fmt.Errorf("failed to marshal subscription: %w", err)
+	}
+
+	_, err = db.client.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName: aws.String(db.tableName),
+		Item:      item,
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to save subscription: %w", err)
+	}
+
+	return nil
+}
+
+// DeleteSubscriptionByChannel removes a subscription from a channel.
+// Since we only have the channel ID from the interaction, we query by server ID first.
+func (db *Database) DeleteSubscriptionByChannel(ctx context.Context, serverID, channelID string) (bool, error) {
+	// Query all subscriptions for this server.
+	out, err := db.client.Query(ctx, &dynamodb.QueryInput{
+		TableName:              aws.String(db.tableName),
+		KeyConditionExpression: aws.String("server_id = :sid"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":sid": &types.AttributeValueMemberS{Value: serverID},
+		},
+	})
+
+	if err != nil {
+		return false, fmt.Errorf("failed to query subscriptions: %w", err)
+	}
+
+	var found bool
+	for _, item := range out.Items {
+		var sub models.Subscription
+		if err := attributevalue.UnmarshalMap(item, &sub); err != nil {
+			continue
+		}
+
+		// Check if this subscription matches the target channel.
+		if sub.ChannelID == channelID {
+			_, err = db.client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+				TableName: aws.String(db.tableName),
+				Key: map[string]types.AttributeValue{
+					"server_id":       &types.AttributeValueMemberS{Value: serverID},
+					"subscription_id": &types.AttributeValueMemberS{Value: sub.SubscriptionID},
+				},
+			})
+			if err != nil {
+				return false, fmt.Errorf("failed to delete subscription: %w", err)
+			}
+			found = true
+			break
+		}
+	}
+
+	return found, nil
 }
