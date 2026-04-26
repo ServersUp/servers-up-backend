@@ -6,6 +6,83 @@ A modern, highly-available backend suite for game server status polling and Disc
 
 ServersUp Backend provides a robust infrastructure for monitoring game server availability (starting with Battle.net/World of Warcraft) and allowing users to subscribe to real-time status alerts via Discord. The system is designed for multi-region high availability and uses a dynamic CI/CD pipeline for seamless deployments.
 
+## 🏗 Architecture
+
+```mermaid
+graph TD
+    subgraph "External Messaging"
+        DA["Discord API"]
+        DU["Discord User"]
+        DB["Discord Bot"]
+    end
+
+    subgraph "External Game APIs"
+        BN["Battle.net API"]
+        GA["Game A API"]
+        GB["Game B API"]
+    end
+
+    subgraph "AWS Infrastructure (ServersUp Backend)"
+        subgraph "Ingestion & Commands"
+            DBA["Discord Bot API (Lambda)"]
+            FURL["Function URL"]
+        end
+
+        subgraph "Polling & Monitoring (Extensible)"
+            BPF["BNet Polling Lambda"]
+            GAP["Game A Polling Lambda"]
+            GBP["Game B Polling Lambda"]
+            EB["EventBridge (Schedules)"]
+        end
+
+        subgraph "Storage & Configuration"
+            DDB_SUB["DynamoDB (Subscriptions)"]
+            DDB_STS["DynamoDB (Server Status)"]
+            S3_CFG["S3 (Server Mappings)"]
+        end
+
+        subgraph "Future Services"
+            NE["Notification Engine (Lambda)"]
+        end
+    end
+
+    %% Command Flows
+    DU -- "Slash Commands" --> DB
+    DB -- "Request" --> DA
+    DA -- "Response" --> DB
+    DA -- "Signed POST" --> FURL
+    FURL --> DBA
+    DBA -- "Read/Write" --> DDB_SUB
+    DBA -- "Lookup Names" --> S3_CFG
+
+    %% Polling Flows
+    EB -- "Trigger" --> BPF
+    EB -- "Trigger" --> GAP
+    EB -- "Trigger" --> GBP
+    
+    GBP -- "Poll" --> GB
+    GAP -- "Poll" --> GA
+    BPF -- "Poll" --> BN
+    
+    BPF & GAP & GBP --> DDB_STS
+
+    %% Notification Flows
+    DDB_STS -- "Status Change" --> NE
+    DDB_SUB -- "Lookup Targets" --> NE
+    NE -- "Send Alerts" --> DA
+    DB -- "Notify" --> DU
+
+    %% Styling
+    style DBA fill:#f9f,stroke:#333,stroke-width:2px
+    style BPF fill:#f9f,stroke:#333,stroke-width:2px
+    style GAP fill:#f9f,stroke:#333,stroke-width:2px
+    style GBP fill:#f9f,stroke:#333,stroke-width:2px
+    style NE fill:#f9f,stroke:#333,stroke-width:2px,stroke-dasharray: 5 5
+    style DDB_SUB fill:#00f2,stroke:#333,stroke-width:2px
+    style DDB_STS fill:#00f2,stroke:#333,stroke-width:2px
+    style S3_CFG fill:#00f2,stroke:#333,stroke-width:2px
+```
+
 ## 🛠 Technology Stack
 
 *   **Language**: Go 1.25+
