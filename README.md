@@ -60,7 +60,7 @@ The project features a **Fully Dynamic Deployment Matrix**.
 ### Environment Variables
 *   `DDB_TABLE_NAME`: DynamoDB table for server statuses.
 *   `DDB_SUBSCRIPTIONS_TABLE_NAME`: DynamoDB table for Discord subscriptions.
-*   `DISCORD_PUBLIC_KEY`: Used for signature verification.
+*   `DISCORD_API_PUBLIC_KEY`: Used for signature verification.
 *   `CONFIG_BUCKET`: S3 bucket for configuration files.
 
 ---

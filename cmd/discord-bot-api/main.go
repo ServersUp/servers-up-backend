@@ -61,7 +61,7 @@ func NewHandler(ctx context.Context) *Handler {
 	return &Handler{
 		database:         db.NewDatabase(dynamodb.NewFromConfig(cfg), os.Getenv("DDB_SUBSCRIPTIONS_TABLE_NAME")),
 		configProvider:   config.NewProvider(ssm.NewFromConfig(cfg), s3.NewFromConfig(cfg)),
-		discordPublicKey: os.Getenv("DISCORD_PUBLIC_KEY"),
+		discordPublicKey: os.Getenv("DISCORD_API_PUBLIC_KEY"),
 	}
 }
 
