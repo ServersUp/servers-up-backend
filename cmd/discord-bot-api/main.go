@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -70,17 +71,29 @@ func (h *Handler) HandleRequest(ctx context.Context, request events.LambdaFuncti
 	signature := request.Headers["x-signature-ed25519"]
 	timestamp := request.Headers["x-signature-timestamp"]
 
-	// Log incoming request details for troubleshooting
-	slog.Debug("Incoming Discord Request", "sig", signature, "ts", timestamp, "body", request.Body)
+	// The body may be base64 encoded by AWS if it contains special characters.
+	// We must decode it to ensure we verify the exact bytes Discord signed.
+	bodyBytes := []byte(request.Body)
+	if request.IsBase64Encoded {
+		decoded, err := base64.StdEncoding.DecodeString(request.Body)
+		if err != nil {
+			slog.Error("failed to decode base64 body", "error", err)
+			return events.LambdaFunctionURLResponse{StatusCode: http.StatusBadRequest, Body: "Invalid encoding"}, nil
+		}
+		bodyBytes = decoded
+	}
 
-	if err := discord.VerifySignature(h.discordPublicKey, signature, timestamp, request.Body); err != nil {
+	// Log incoming request details for troubleshooting
+	slog.Debug("Incoming Discord Request", "sig", signature, "ts", timestamp, "body", string(bodyBytes), "isBase64", request.IsBase64Encoded)
+
+	if err := discord.VerifySignature(h.discordPublicKey, signature, timestamp, string(bodyBytes)); err != nil {
 		slog.Warn("Invalid request signature", "error", err, "sig", signature, "ts", timestamp)
 		return events.LambdaFunctionURLResponse{StatusCode: http.StatusUnauthorized, Body: "Invalid signature"}, nil
 	}
 
 	// 2. Parse Interaction
 	var interaction discord.Interaction
-	if err := json.Unmarshal([]byte(request.Body), &interaction); err != nil {
+	if err := json.Unmarshal(bodyBytes, &interaction); err != nil {
 		slog.Error("failed to unmarshal interaction", "error", err)
 		return events.LambdaFunctionURLResponse{StatusCode: http.StatusBadRequest, Body: "Invalid JSON"}, nil
 	}
