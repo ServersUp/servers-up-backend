@@ -51,17 +51,19 @@ The project features a **Fully Dynamic Deployment Matrix**.
 *   **Zero-Touch Scaling**: New services are automatically built and deployed to their specified regions without manual workflow edits.
 *   **Security**: Uses GitHub OIDC to assume AWS roles, eliminating the need for long-lived credentials.
 
-## 📝 Configuration
+## ⚙️ Configuration & Extensibility
 
-### S3 Configuration (`serversup-config` bucket)
-*   `server-mapping.json`: Maps human-friendly game/server names to backend IDs.
-*   `bnet-server-config.json`: Defines which realms the polling function should monitor.
+The project utilizes a multi-layered configuration system designed for maximum flexibility and runtime extensibility without requiring code changes or redeployments.
 
-### Environment Variables
-*   `DDB_TABLE_NAME`: DynamoDB table for server statuses.
-*   `DDB_SUBSCRIPTIONS_TABLE_NAME`: DynamoDB table for Discord subscriptions.
-*   `DISCORD_PUBLIC_KEY`: Used for signature verification.
-*   `CONFIG_BUCKET`: S3 bucket for configuration files.
+### 📦 S3-Based Dynamic Config
+Core business logic, such as server-to-provider mappings and polling targets, is stored as JSON objects in Amazon S3.
+*   **Decoupled Logic**: Add new games, regions, or servers by simply updating a JSON file.
+*   **Runtime Updates**: Services pull the latest configuration at execution time, allowing for instant system-wide changes.
+
+### 🔐 SSM & Environment Secrets
+Sensitive data and environment-specific toggles are managed through AWS SSM Parameter Store and standard Environment Variables.
+*   **Secure Secrets**: API keys and client secrets are stored encrypted in SSM.
+*   **Infrastructure Agnostic**: The `internal/config` provider abstracts the retrieval logic, making it easy to swap configuration sources if needed.
 
 ---
 *Created and maintained by the ServersUp Team.*
