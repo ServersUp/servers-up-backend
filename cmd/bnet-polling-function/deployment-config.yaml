@@ -1,5 +1,6 @@
 # /cmd/bnet-polling-function/deploy_config.yml
 
+type: lambda
 function_name: BNetPollingLambda
 regions:
   - name: us-east-1

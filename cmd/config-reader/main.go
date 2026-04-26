@@ -13,6 +13,7 @@ type TargetConfig struct {
 	Name         string         `yaml:"name" json:"name"`
 	Alias        string         `yaml:"alias" json:"alias"`
 	FunctionName string         `yaml:"-" json:"function_name"` // Injected from the root configuration
+	LambdaID     string         `yaml:"-" json:"lambda_id"`     // Injected for matrix identification
 	Meta         map[string]any `yaml:"meta,omitempty" json:"meta,omitempty"`
 }
 
@@ -24,11 +25,15 @@ type DeploymentConfig struct {
 
 func main() {
 	if len(os.Args) < 2 {
-		slog.Error("usage: config-reader <config-path>")
+		slog.Error("usage: config-reader <config-path> [lambda-id]")
 		os.Exit(1)
 	}
 
 	configPath := os.Args[1]
+	lambdaID := ""
+	if len(os.Args) > 2 {
+		lambdaID = os.Args[2]
+	}
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		slog.Error("failed to read config file", "path", configPath, "error", err)
@@ -45,6 +50,7 @@ func main() {
 	var deploymentMatrix []TargetConfig
 	for _, target := range cfg.Targets {
 		target.FunctionName = cfg.FunctionName
+		target.LambdaID = lambdaID
 		deploymentMatrix = append(deploymentMatrix, target)
 	}
 

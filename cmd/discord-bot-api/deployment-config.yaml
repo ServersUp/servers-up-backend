@@ -1,0 +1,7 @@
+# /cmd/discord-bot-api/deployment-config.yaml
+
+type: lambda
+function_name: ServersUpDiscordBotApiLambda
+regions:
+  - name: us-east-1
+    alias: production
