@@ -331,12 +331,11 @@ func (h *Handler) handleListServers(ctx context.Context, data discord.Interactio
 		return h.discordResponse(content)
 	}
 
-	// 3) Still too large: log the full list and return a short message the user can act on.
-	slog.Info("servers list too large for Discord response", "game", gameName, "serverCount", len(servers), "servers", joinedNewline)
+	// 3) Still too large for Discord message limits.
 	return h.discordResponse(fmt.Sprintf(
-		"That server list is too large to display in Discord (%d servers).\nI logged the full list to CloudWatch for game `%s` — copy it from logs and pastebin it, then share the link here.",
-		len(servers),
+		"Sorry — there are too many servers to display for `%s` (%d total).",
 		gameName,
+		len(servers),
 	))
 }
 
