@@ -313,30 +313,31 @@ func (h *Handler) handleListServers(ctx context.Context, data discord.Interactio
 		return h.discordResponse(fmt.Sprintf("No servers configured for `%s`.", gameName))
 	}
 
-	// Build a Discord-safe message (<= 2000 chars).
+	// Discord hard-limits message length (2000 chars). We try progressively more compact renderings,
+	// and if it still won't fit we log the full list and return instructions.
 	const maxChars = 1900
-	const maxItems = 80
 
-	lines := make([]string, 0, minInt(len(servers), maxItems))
-	for i, s := range servers {
-		if i >= maxItems {
-			break
-		}
-		lines = append(lines, fmt.Sprintf("- `%s`", s))
+	// 1) Most compact: comma-separated (no bullet markup).
+	joinedComma := strings.Join(servers, ", ")
+	content := fmt.Sprintf("**Servers for `%s`** (%d total)\n%s", gameName, len(servers), joinedComma)
+	if len(content) <= maxChars {
+		return h.discordResponse(content)
 	}
 
-	content := fmt.Sprintf("**Servers for `%s`** (%d total)\n%s", gameName, len(servers), strings.Join(lines, "\n"))
-	if len(content) > maxChars {
-		// Very defensive: shrink list until we fit.
-		for len(lines) > 0 && len(content) > maxChars {
-			lines = lines[:len(lines)-1]
-			content = fmt.Sprintf("**Servers for `%s`** (%d total)\n%s", gameName, len(servers), strings.Join(lines, "\n"))
-		}
+	// 2) Next: newline-separated in a code block (still readable, often smaller than backticked bullets).
+	joinedNewline := strings.Join(servers, "\n")
+	content = fmt.Sprintf("**Servers for `%s`** (%d total)\n```%s```", gameName, len(servers), joinedNewline)
+	if len(content) <= maxChars {
+		return h.discordResponse(content)
 	}
-	if len(servers) > len(lines) {
-		content += fmt.Sprintf("\n\nShowing %d of %d. (List truncated)", len(lines), len(servers))
-	}
-	return h.discordResponse(content)
+
+	// 3) Still too large: log the full list and return a short message the user can act on.
+	slog.Info("servers list too large for Discord response", "game", gameName, "serverCount", len(servers), "servers", joinedNewline)
+	return h.discordResponse(fmt.Sprintf(
+		"That server list is too large to display in Discord (%d servers).\nI logged the full list to CloudWatch for game `%s` — copy it from logs and pastebin it, then share the link here.",
+		len(servers),
+		gameName,
+	))
 }
 
 func (h *Handler) formatLookupError(action string, mapping servermap.Mapping, err error, rawGame, rawServer string) string {
@@ -376,11 +377,4 @@ func wrapBackticks(items []string) []string {
 		out = append(out, fmt.Sprintf("`%s`", it))
 	}
 	return out
-}
-
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
