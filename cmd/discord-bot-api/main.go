@@ -22,7 +22,6 @@ import (
 	"github.com/google/uuid"
 )
 
-
 // ServerMapping defines the structure of the S3 mapping file.
 type ServerMapping struct {
 	Games map[string]struct {
