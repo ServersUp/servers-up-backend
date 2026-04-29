@@ -11,6 +11,7 @@ import (
 
 	"github.com/ServersUp/servers-up-backend/internal/discord"
 	"github.com/ServersUp/servers-up-backend/internal/models"
+	"github.com/ServersUp/servers-up-backend/internal/servermap"
 	"github.com/aws/aws-lambda-go/events"
 )
 
@@ -43,20 +44,11 @@ func TestHandleRequest(t *testing.T) {
 	mockDB := &MockDatabase{}
 	mockConfig := &MockConfig{
 		LoadFunc: func(ctx context.Context, bucket, key string, target any) error {
-			t := target.(*ServerMapping)
-			t.Games = map[string]struct {
-				Provider string `json:"provider"`
-				Servers  map[string]struct {
-					Region     string `json:"region"`
-					Identifier any    `json:"identifier"`
-				} `json:"servers"`
-			}{
+			t := target.(*servermap.Mapping)
+			t.Games = map[string]servermap.Game{
 				"wow": {
 					Provider: "battlenet",
-					Servers: map[string]struct {
-						Region     string `json:"region"`
-						Identifier any    `json:"identifier"`
-					}{
+					Servers: map[string]servermap.Server{
 						"illidan": {Region: "us", Identifier: 57},
 					},
 				},
