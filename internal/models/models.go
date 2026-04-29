@@ -28,12 +28,11 @@ type GameServerStatus struct {
 // Subscription represents a Discord notification target for a game server.
 type Subscription struct {
 	// ServerID is the hash key (e.g., "battlenet#us#11").
-	ServerID string `json:"server_id" dynamodbav:"server_id"`
+	ServerID string `json:"server_id" dynamodbav:"serverId"`
 	// SubscriptionID is a unique identifier for this specific channel/role combo.
-	SubscriptionID string `json:"subscription_id" dynamodbav:"subscription_id"`
+	SubscriptionID string `json:"subscription_id" dynamodbav:"subscriptionId"`
 
-	GuildID   string `json:"guild_id" dynamodbav:"guild_id"`
-	ChannelID string `json:"channel_id" dynamodbav:"channel_id"`
+	GuildID   string `json:"guild_id" dynamodbav:"guildId"`
+	ChannelID string `json:"channel_id" dynamodbav:"channelId"`
 	Mention   string `json:"mention" dynamodbav:"mention"`
 }
-
