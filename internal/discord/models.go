@@ -60,11 +60,13 @@ type InteractionOption struct {
 
 // InteractionResponse represents the response sent back to Discord.
 type InteractionResponse struct {
-	Type InteractionResponseType `json:"type"`
+	Type InteractionResponseType  `json:"type"`
 	Data *InteractionResponseData `json:"data,omitempty"`
 }
 
 // InteractionResponseData represents the content of a Discord response.
 type InteractionResponseData struct {
 	Content string `json:"content"`
+	// Flags can be used to control response visibility (e.g., 64 for ephemeral).
+	Flags int `json:"flags,omitempty"`
 }

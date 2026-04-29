@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/ServersUp/servers-up-backend/internal/models"
+	"github.com/ServersUp/servers-up-backend/internal/serverid"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
@@ -28,10 +29,10 @@ func NewDatabase(client *dynamodb.Client, tableName string) *Database {
 // It accepts gameID and provider to ensure the database layer remains agnostic of specific integrations.
 func (db *Database) SaveServerStatus(ctx context.Context, gameID, provider, region string, identifier any, status string) error {
 	now := time.Now().Unix()
-	
+
 	// ServerID is constructed to be unique across all providers and regions.
-	serverID := fmt.Sprintf("%s#%s#%v", provider, region, identifier)
-	
+	serverID := serverid.Generate(provider, region, identifier)
+
 	serverStatus := models.GameServerStatus{
 		GameID:        gameID,
 		ServerID:      serverID,

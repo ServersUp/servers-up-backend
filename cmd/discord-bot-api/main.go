@@ -4,15 +4,20 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
+	"sort"
+	"strings"
 
 	"github.com/ServersUp/servers-up-backend/internal/config"
 	"github.com/ServersUp/servers-up-backend/internal/db"
 	"github.com/ServersUp/servers-up-backend/internal/discord"
 	"github.com/ServersUp/servers-up-backend/internal/models"
+	"github.com/ServersUp/servers-up-backend/internal/serverid"
+	"github.com/ServersUp/servers-up-backend/internal/servermap"
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -21,17 +26,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/google/uuid"
 )
-
-// ServerMapping defines the structure of the S3 mapping file.
-type ServerMapping struct {
-	Games map[string]struct {
-		Provider string `json:"provider"`
-		Servers  map[string]struct {
-			Region     string `json:"region"`
-			Identifier any    `json:"identifier"`
-		} `json:"servers"`
-	} `json:"games"`
-}
 
 // Database defines the required interface for the subscription store.
 type Database interface {
@@ -50,6 +44,11 @@ type Handler struct {
 	configProvider   ConfigProvider
 	discordPublicKey string
 }
+
+const (
+	defaultConfigBucket     = "serversup-config"
+	defaultServerMappingKey = "server-mapping.json"
+)
 
 func NewHandler(ctx context.Context) *Handler {
 	cfg, err := awsconfig.LoadDefaultConfig(ctx)
@@ -106,7 +105,7 @@ func (h *Handler) HandleRequest(ctx context.Context, request events.LambdaFuncti
 	case discord.InteractionTypeApplicationCommand:
 		var data discord.InteractionData
 		if err := json.Unmarshal(interaction.Data, &data); err != nil {
-			return h.errorResponse("failed to parse command data")
+			return h.discordResponse("Sorry — I couldn’t parse that command payload. Please try again.")
 		}
 
 		slog.Info("Handling Slash Command", "command", data.Name, "guild", interaction.GuildID)
@@ -116,40 +115,37 @@ func (h *Handler) HandleRequest(ctx context.Context, request events.LambdaFuncti
 			return h.handleSubscribe(ctx, interaction, data)
 		case "unsubscribe":
 			return h.handleUnsubscribe(ctx, interaction, data)
+		case "help":
+			return h.handleHelp()
+		case "games":
+			return h.handleListGames(ctx)
+		case "servers":
+			return h.handleListServers(ctx, data)
 		default:
-			return h.errorResponse("unknown command")
+			return h.discordResponse("Unknown command. Use `/help` to see what I can do.")
 		}
 	}
 
-	return h.errorResponse("unsupported interaction type")
+	return h.discordResponse("Unsupported interaction type.")
 }
 
 func (h *Handler) handleSubscribe(ctx context.Context, interaction discord.Interaction, data discord.InteractionData) (events.LambdaFunctionURLResponse, error) {
-	gameName := h.getOption(data.Options, "game")
-	serverName := h.getOption(data.Options, "server")
+	gameName := servermap.NormalizeKey(h.getOption(data.Options, "game"))
+	serverName := servermap.NormalizeKey(h.getOption(data.Options, "server"))
 	roleID := h.getOption(data.Options, "role")
 
-	// 1. Load mapping from S3
-	var mapping ServerMapping
-	err := h.configProvider.LoadJSONFromS3(ctx, os.Getenv("CONFIG_BUCKET"), os.Getenv("SERVER_MAPPING_PATH"), &mapping)
+	mapping, err := h.loadServerMapping(ctx)
 	if err != nil {
 		slog.Error("failed to load server mapping", "error", err)
-		return h.discordResponse("System error: Unable to load server configuration.")
+		return h.discordResponse("System error: Unable to load server configuration right now. Please try again in a bit.")
 	}
 
-	// 2. Perform translation
-	game, ok := mapping.Games[gameName]
-	if !ok {
-		return h.discordResponse(fmt.Sprintf("Unsupported game: %s", gameName))
+	gameID, game, serverKey, server, lookupErr := mapping.Lookup(gameName, serverName)
+	if lookupErr != nil {
+		return h.discordResponse(h.formatLookupError("subscribe", mapping, lookupErr, gameName, serverName))
 	}
 
-	server, ok := game.Servers[serverName]
-	if !ok {
-		return h.discordResponse(fmt.Sprintf("Unknown server '%s' for game %s", serverName, gameName))
-	}
-
-	// Construct the technical server ID (e.g., battlenet#us#11)
-	technicalID := fmt.Sprintf("%s#%s#%v", game.Provider, server.Region, server.Identifier)
+	technicalID := serverid.Generate(game.Provider, server.Region, server.Identifier)
 
 	mention := ""
 	if roleID != "" {
@@ -169,33 +165,29 @@ func (h *Handler) handleSubscribe(ctx context.Context, interaction discord.Inter
 		return h.discordResponse("Failed to create subscription. Please try again later.")
 	}
 
-	return h.discordResponse(fmt.Sprintf("Successfully subscribed to updates for **%s** (%s)!", serverName, gameName))
+	channelMention := fmt.Sprintf("<#%s>", interaction.ChannelID)
+	if mention != "" {
+		return h.discordResponse(fmt.Sprintf("Subscribed %s to **%s** / **%s** updates in %s.", mention, gameID, serverKey, channelMention))
+	}
+	return h.discordResponse(fmt.Sprintf("Subscribed this channel to **%s** / **%s** updates.", gameID, serverKey))
 }
 
 func (h *Handler) handleUnsubscribe(ctx context.Context, interaction discord.Interaction, data discord.InteractionData) (events.LambdaFunctionURLResponse, error) {
-	gameName := h.getOption(data.Options, "game")
-	serverName := h.getOption(data.Options, "server")
+	gameName := servermap.NormalizeKey(h.getOption(data.Options, "game"))
+	serverName := servermap.NormalizeKey(h.getOption(data.Options, "server"))
 
-	// 1. Load mapping from S3
-	var mapping ServerMapping
-	err := h.configProvider.LoadJSONFromS3(ctx, os.Getenv("CONFIG_BUCKET"), os.Getenv("SERVER_MAPPING_PATH"), &mapping)
+	mapping, err := h.loadServerMapping(ctx)
 	if err != nil {
 		slog.Error("failed to load server mapping", "error", err)
-		return h.discordResponse("System error: Unable to load server configuration.")
+		return h.discordResponse("System error: Unable to load server configuration right now. Please try again in a bit.")
 	}
 
-	// 2. Perform translation
-	game, ok := mapping.Games[gameName]
-	if !ok {
-		return h.discordResponse(fmt.Sprintf("Unsupported game: %s", gameName))
+	gameID, game, serverKey, server, lookupErr := mapping.Lookup(gameName, serverName)
+	if lookupErr != nil {
+		return h.discordResponse(h.formatLookupError("unsubscribe", mapping, lookupErr, gameName, serverName))
 	}
 
-	server, ok := game.Servers[serverName]
-	if !ok {
-		return h.discordResponse(fmt.Sprintf("Unknown server '%s' for game %s", serverName, gameName))
-	}
-
-	technicalID := fmt.Sprintf("%s#%s#%v", game.Provider, server.Region, server.Identifier)
+	technicalID := serverid.Generate(game.Provider, server.Region, server.Identifier)
 
 	found, err := h.database.DeleteSubscriptionByChannel(ctx, technicalID, interaction.ChannelID)
 	if err != nil {
@@ -204,10 +196,10 @@ func (h *Handler) handleUnsubscribe(ctx context.Context, interaction discord.Int
 	}
 
 	if !found {
-		return h.discordResponse(fmt.Sprintf("No subscription found for **%s** in this channel.", serverName))
+		return h.discordResponse(fmt.Sprintf("No subscription found for **%s** / **%s** in this channel.", gameID, serverKey))
 	}
 
-	return h.discordResponse(fmt.Sprintf("Successfully unsubscribed from **%s** updates.", serverName))
+	return h.discordResponse(fmt.Sprintf("Unsubscribed this channel from **%s** / **%s** updates.", gameID, serverKey))
 }
 
 // Helper methods for standardized responses
@@ -241,12 +233,154 @@ func (h *Handler) jsonResponse(statusCode int, body any) (events.LambdaFunctionU
 	}, nil
 }
 
-func (h *Handler) errorResponse(msg string) (events.LambdaFunctionURLResponse, error) {
-	return events.LambdaFunctionURLResponse{StatusCode: http.StatusBadRequest, Body: msg}, nil
+func (h *Handler) loadServerMapping(ctx context.Context) (servermap.Mapping, error) {
+	var mapping servermap.Mapping
+
+	bucket := os.Getenv("CONFIG_BUCKET")
+	if bucket == "" {
+		bucket = defaultConfigBucket
+	}
+	key := os.Getenv("SERVER_MAPPING_PATH")
+	if key == "" {
+		key = defaultServerMappingKey
+	}
+
+	if err := h.configProvider.LoadJSONFromS3(ctx, bucket, key, &mapping); err != nil {
+		return servermap.Mapping{}, err
+	}
+	return mapping, nil
+}
+
+func (h *Handler) handleHelp() (events.LambdaFunctionURLResponse, error) {
+	msg := strings.Join([]string{
+		"**ServersUp Discord Bot — Help**",
+		"",
+		"**Commands**",
+		"- `/subscribe game:<game> server:<server> [role:<role>]` — subscribe this channel to server status updates",
+		"- `/unsubscribe game:<game> server:<server>` — unsubscribe this channel",
+		"- `/games` — list supported games",
+		"- `/servers game:<game>` — list servers for a game",
+		"",
+		"**Tips**",
+		"- Game + server names are case-insensitive. Spaces/underscores are treated like hyphens (e.g. `Area 52` → `area-52`).",
+		"- If a server list is very large, I’ll truncate it—use a more specific server name based on the list.",
+	}, "\n")
+	return h.discordResponse(msg)
+}
+
+func (h *Handler) handleListGames(ctx context.Context) (events.LambdaFunctionURLResponse, error) {
+	mapping, err := h.loadServerMapping(ctx)
+	if err != nil {
+		slog.Error("failed to load server mapping", "error", err)
+		return h.discordResponse("System error: Unable to load server configuration right now. Please try again in a bit.")
+	}
+
+	games := mapping.ListGames()
+	if len(games) == 0 {
+		return h.discordResponse("No games are currently configured.")
+	}
+
+	sort.Strings(games)
+	lines := make([]string, 0, len(games))
+	for _, g := range games {
+		lines = append(lines, fmt.Sprintf("- `%s`", g))
+	}
+
+	content := "**Supported games**\n" + strings.Join(lines, "\n")
+	return h.discordResponse(content)
+}
+
+func (h *Handler) handleListServers(ctx context.Context, data discord.InteractionData) (events.LambdaFunctionURLResponse, error) {
+	gameName := servermap.NormalizeKey(h.getOption(data.Options, "game"))
+	if gameName == "" {
+		return h.discordResponse("Missing `game`. Try `/servers game:wow` or run `/games` to see supported games.")
+	}
+
+	mapping, err := h.loadServerMapping(ctx)
+	if err != nil {
+		slog.Error("failed to load server mapping", "error", err)
+		return h.discordResponse("System error: Unable to load server configuration right now. Please try again in a bit.")
+	}
+
+	servers, err := mapping.ListServers(gameName)
+	if err != nil {
+		if errors.Is(err, servermap.ErrUnknownGame) {
+			return h.discordResponse(fmt.Sprintf("Unknown game `%s`. Use `/games` to see supported games.", gameName))
+		}
+		return h.discordResponse("Unable to list servers right now.")
+	}
+	if len(servers) == 0 {
+		return h.discordResponse(fmt.Sprintf("No servers configured for `%s`.", gameName))
+	}
+
+	// Build a Discord-safe message (<= 2000 chars).
+	const maxChars = 1900
+	const maxItems = 80
+
+	lines := make([]string, 0, minInt(len(servers), maxItems))
+	for i, s := range servers {
+		if i >= maxItems {
+			break
+		}
+		lines = append(lines, fmt.Sprintf("- `%s`", s))
+	}
+
+	content := fmt.Sprintf("**Servers for `%s`** (%d total)\n%s", gameName, len(servers), strings.Join(lines, "\n"))
+	if len(content) > maxChars {
+		// Very defensive: shrink list until we fit.
+		for len(lines) > 0 && len(content) > maxChars {
+			lines = lines[:len(lines)-1]
+			content = fmt.Sprintf("**Servers for `%s`** (%d total)\n%s", gameName, len(servers), strings.Join(lines, "\n"))
+		}
+	}
+	if len(servers) > len(lines) {
+		content += fmt.Sprintf("\n\nShowing %d of %d. (List truncated)", len(lines), len(servers))
+	}
+	return h.discordResponse(content)
+}
+
+func (h *Handler) formatLookupError(action string, mapping servermap.Mapping, err error, rawGame, rawServer string) string {
+	switch {
+	case errors.Is(err, servermap.ErrMissingGame):
+		return fmt.Sprintf("Missing `game`. Try `/%s game:wow server:illidan` or run `/games`.", action)
+	case errors.Is(err, servermap.ErrMissingServer):
+		if rawGame == "" {
+			return fmt.Sprintf("Missing `server`. Try `/%s game:wow server:illidan`.", action)
+		}
+		return fmt.Sprintf("Missing `server`. Run `/servers game:%s` to see valid server names.", servermap.NormalizeKey(rawGame))
+	case errors.Is(err, servermap.ErrUnknownGame):
+		games := mapping.ListGames()
+		if len(games) == 0 {
+			return fmt.Sprintf("Unknown game `%s`.", servermap.NormalizeKey(rawGame))
+		}
+		if len(games) > 10 {
+			games = games[:10]
+		}
+		return fmt.Sprintf("Unknown game `%s`. Try `/games` (examples: %s).", servermap.NormalizeKey(rawGame), strings.Join(wrapBackticks(games), ", "))
+	case errors.Is(err, servermap.ErrUnknownServer):
+		return fmt.Sprintf("Unknown server `%s` for game `%s`. Run `/servers game:%s` to see valid server names.", servermap.NormalizeKey(rawServer), servermap.NormalizeKey(rawGame), servermap.NormalizeKey(rawGame))
+	default:
+		return "Invalid request. Use `/help` for usage."
+	}
 }
 
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	handler := NewHandler(context.Background())
 	lambda.Start(handler.HandleRequest)
+}
+
+func wrapBackticks(items []string) []string {
+	out := make([]string, 0, len(items))
+	for _, it := range items {
+		out = append(out, fmt.Sprintf("`%s`", it))
+	}
+	return out
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
