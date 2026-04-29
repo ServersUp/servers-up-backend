@@ -84,7 +84,7 @@ func (db *Database) DeleteSubscriptionByChannel(ctx context.Context, serverID, c
 	// Query all subscriptions for this server.
 	out, err := db.client.Query(ctx, &dynamodb.QueryInput{
 		TableName:              aws.String(db.tableName),
-		KeyConditionExpression: aws.String("server_id = :sid"),
+		KeyConditionExpression: aws.String("serverId = :sid"),
 		ExpressionAttributeValues: map[string]types.AttributeValue{
 			":sid": &types.AttributeValueMemberS{Value: serverID},
 		},
@@ -106,8 +106,8 @@ func (db *Database) DeleteSubscriptionByChannel(ctx context.Context, serverID, c
 			_, err = db.client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
 				TableName: aws.String(db.tableName),
 				Key: map[string]types.AttributeValue{
-					"server_id":       &types.AttributeValueMemberS{Value: serverID},
-					"subscription_id": &types.AttributeValueMemberS{Value: sub.SubscriptionID},
+					"serverId":       &types.AttributeValueMemberS{Value: serverID},
+					"subscriptionId": &types.AttributeValueMemberS{Value: sub.SubscriptionID},
 				},
 			})
 			if err != nil {
