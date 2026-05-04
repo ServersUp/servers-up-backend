@@ -121,3 +121,39 @@ func (db *Database) DeleteSubscriptionByChannel(ctx context.Context, serverID, c
 
 	return found, nil
 }
+
+// ListSubscriptionsByServer returns every Discord subscription for the given server ID.
+// It paginates until all items are read.
+func (db *Database) ListSubscriptionsByServer(ctx context.Context, serverID string) ([]models.Subscription, error) {
+	var out []models.Subscription
+	var startKey map[string]types.AttributeValue
+
+	for {
+		qout, err := db.client.Query(ctx, &dynamodb.QueryInput{
+			TableName:              aws.String(db.tableName),
+			KeyConditionExpression: aws.String("serverId = :sid"),
+			ExpressionAttributeValues: map[string]types.AttributeValue{
+				":sid": &types.AttributeValueMemberS{Value: serverID},
+			},
+			ExclusiveStartKey: startKey,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to query subscriptions: %w", err)
+		}
+
+		for _, item := range qout.Items {
+			var sub models.Subscription
+			if err := attributevalue.UnmarshalMap(item, &sub); err != nil {
+				continue
+			}
+			out = append(out, sub)
+		}
+
+		if qout.LastEvaluatedKey == nil {
+			break
+		}
+		startKey = qout.LastEvaluatedKey
+	}
+
+	return out, nil
+}

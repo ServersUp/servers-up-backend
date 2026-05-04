@@ -1,0 +1,7 @@
+# /cmd/discord-guild-notify-job-creator/deployment-config.yaml
+
+type: lambda
+function_name: ServersUpDiscordGuildNotifyJobCreatorLambda
+regions:
+  - name: us-east-1
+    alias: production
