@@ -53,9 +53,9 @@ func NewHandler(ctx context.Context) *Handler {
 		os.Exit(1)
 	}
 
-	queueURL := os.Getenv("DISCORD_GUILD_NOTIFY_JOBS_QUEUE_URL")
+	queueURL := os.Getenv("GUILD_NOTIFY_JOBS_QUEUE_URL")
 	if queueURL == "" {
-		slog.Error("missing required env DISCORD_GUILD_NOTIFY_JOBS_QUEUE_URL")
+		slog.Error("missing required env GUILD_NOTIFY_JOBS_QUEUE_URL")
 		os.Exit(1)
 	}
 
