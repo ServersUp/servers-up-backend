@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/ServersUp/servers-up-backend/internal/models"
@@ -24,6 +25,7 @@ func (m *mockLister) ListSubscriptionsByServer(ctx context.Context, serverID str
 }
 
 type mockSQS struct {
+	mu        sync.Mutex
 	bodies    []string
 	failAfter int // 0 = never fail; N = fail on Nth SendMessage call (1-based)
 	calls     int
@@ -31,6 +33,9 @@ type mockSQS struct {
 }
 
 func (m *mockSQS) SendMessage(ctx context.Context, params *sqs.SendMessageInput, optFns ...func(*sqs.Options)) (*sqs.SendMessageOutput, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	m.calls++
 	if m.err != nil {
 		return nil, m.err
@@ -119,18 +124,21 @@ func TestProcessRecord_UP_to_DOWN_enqueuesJobs(t *testing.T) {
 	if len(ms.bodies) != 2 {
 		t.Fatalf("expected 2 sqs messages, got %d", len(ms.bodies))
 	}
-	var j0, j1 models.GuildNotifyJob
-	if err := json.Unmarshal([]byte(ms.bodies[0]), &j0); err != nil {
-		t.Fatal(err)
+	byChannel := make(map[string]models.GuildNotifyJob, len(ms.bodies))
+	for _, b := range ms.bodies {
+		var j models.GuildNotifyJob
+		if err := json.Unmarshal([]byte(b), &j); err != nil {
+			t.Fatal(err)
+		}
+		byChannel[j.ChannelID] = j
 	}
-	if err := json.Unmarshal([]byte(ms.bodies[1]), &j1); err != nil {
-		t.Fatal(err)
+	jc1 := byChannel["c1"]
+	if jc1.ServerID != "battlenet#us#11" || jc1.Status != "DOWN" || jc1.GuildID != "g1" || jc1.RoleID != "" {
+		t.Fatalf("unexpected job for c1: %+v", jc1)
 	}
-	if j0.ServerID != "battlenet#us#11" || j0.Status != "DOWN" || j0.GuildID != "g1" || j0.ChannelID != "c1" || j0.RoleID != "" {
-		t.Fatalf("unexpected job0: %+v", j0)
-	}
-	if j1.RoleID != "777" || j1.ChannelID != "c2" {
-		t.Fatalf("unexpected job1: %+v", j1)
+	jc2 := byChannel["c2"]
+	if jc2.RoleID != "777" || jc2.GuildID != "g1" || jc2.Status != "DOWN" {
+		t.Fatalf("unexpected job for c2: %+v", jc2)
 	}
 }
 

@@ -16,9 +16,14 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
+	"golang.org/x/sync/errgroup"
 )
 
 var roleMentionPattern = regexp.MustCompile(`<@&(\d+)>`)
+
+// maxConcurrentSQSSends bounds in-flight SendMessage calls per stream record to avoid
+// spiking connections when a server has many Discord subscriptions.
+const maxConcurrentSQSSends = 32
 
 type subscriptionLister interface {
 	ListSubscriptionsByServer(ctx context.Context, serverID string) ([]models.Subscription, error)
@@ -116,37 +121,48 @@ func (h *Handler) processRecord(ctx context.Context, rec *events.DynamoDBEventRe
 		return nil
 	}
 
+	g, sendCtx := errgroup.WithContext(ctx)
+	g.SetLimit(maxConcurrentSQSSends)
+
 	for _, sub := range subs {
-		job := models.GuildNotifyJob{
-			ServerID:  serverID,
-			Status:    newStatus,
-			GuildID:   sub.GuildID,
-			ChannelID: sub.ChannelID,
-			RoleID:    roleIDFromMention(sub.Mention),
-		}
+		sub := sub
+		g.Go(func() error {
+			job := models.GuildNotifyJob{
+				ServerID:  serverID,
+				Status:    newStatus,
+				GuildID:   sub.GuildID,
+				ChannelID: sub.ChannelID,
+				RoleID:    roleIDFromMention(sub.Mention),
+			}
 
-		body, err := json.Marshal(job)
-		if err != nil {
-			slog.Error("failed to marshal guild notify job", "error", err, "serverID", serverID, "guildID", sub.GuildID)
-			return fmt.Errorf("marshal guild notify job: %w", err)
-		}
+			body, err := json.Marshal(job)
+			if err != nil {
+				slog.Error("failed to marshal guild notify job", "error", err, "serverID", serverID, "guildID", sub.GuildID)
+				return fmt.Errorf("marshal guild notify job: %w", err)
+			}
 
-		_, err = h.sqs.SendMessage(ctx, &sqs.SendMessageInput{
-			QueueUrl:    aws.String(h.queueURL),
-			MessageBody: aws.String(string(body)),
+			_, err = h.sqs.SendMessage(sendCtx, &sqs.SendMessageInput{
+				QueueUrl:    aws.String(h.queueURL),
+				MessageBody: aws.String(string(body)),
+			})
+			if err != nil {
+				slog.Error("failed to send SQS message", "error", err, "serverID", serverID, "guildID", sub.GuildID, "channelID", sub.ChannelID)
+				return fmt.Errorf("sqs send for server %s guild %s: %w", serverID, sub.GuildID, err)
+			}
+
+			slog.Info("enqueued guild notify job",
+				"serverID", serverID,
+				"status", newStatus,
+				"guildID", sub.GuildID,
+				"channelID", sub.ChannelID,
+				"hasRole", job.RoleID != "",
+			)
+			return nil
 		})
-		if err != nil {
-			slog.Error("failed to send SQS message", "error", err, "serverID", serverID, "guildID", sub.GuildID, "channelID", sub.ChannelID)
-			return fmt.Errorf("sqs send for server %s guild %s: %w", serverID, sub.GuildID, err)
-		}
+	}
 
-		slog.Info("enqueued guild notify job",
-			"serverID", serverID,
-			"status", newStatus,
-			"guildID", sub.GuildID,
-			"channelID", sub.ChannelID,
-			"hasRole", job.RoleID != "",
-		)
+	if err := g.Wait(); err != nil {
+		return err
 	}
 
 	slog.Info("finished processing status transition record",
