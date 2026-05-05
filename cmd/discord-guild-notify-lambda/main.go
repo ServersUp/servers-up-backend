@@ -1,0 +1,164 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"os"
+	"time"
+
+	"github.com/ServersUp/servers-up-backend/internal/models"
+	"github.com/aws/aws-lambda-go/events"
+	"github.com/aws/aws-lambda-go/lambda"
+)
+
+type DiscordClient interface {
+	SendChannelMessage(ctx context.Context, channelID, content, roleID string) error
+}
+
+type Handler struct {
+	discord DiscordClient
+}
+
+func NewHandler() *Handler {
+	token := os.Getenv("DISCORD_BOT_TOKEN")
+	if token == "" {
+		slog.Error("missing required env DISCORD_BOT_TOKEN")
+		os.Exit(1)
+	}
+
+	return &Handler{
+		discord: &discordHTTPClient{
+			httpClient: &http.Client{Timeout: 10 * time.Second},
+			baseURL:    "https://discord.com/api/v10",
+			botToken:   token,
+		},
+	}
+}
+
+func (h *Handler) HandleRequest(ctx context.Context, event events.SQSEvent) (events.SQSEventResponse, error) {
+	var resp events.SQSEventResponse
+
+	for _, rec := range event.Records {
+		err := h.processRecord(ctx, rec)
+		if err == nil {
+			continue
+		}
+
+		slog.Error("failed to process SQS record", "error", err, "messageId", rec.MessageId)
+		resp.BatchItemFailures = append(resp.BatchItemFailures, events.SQSBatchItemFailure{
+			ItemIdentifier: rec.MessageId,
+		})
+	}
+
+	return resp, nil
+}
+
+func (h *Handler) processRecord(ctx context.Context, rec events.SQSMessage) error {
+	var job models.GuildNotifyJob
+	if err := json.Unmarshal([]byte(rec.Body), &job); err != nil {
+		return fmt.Errorf("unmarshal guild notify job: %w", err)
+	}
+
+	if job.ServerID == "" || job.Status == "" || job.ChannelID == "" {
+		return fmt.Errorf("invalid guild notify job: missing required fields (serverId/status/channelId)")
+	}
+
+	content := formatDiscordContent(job)
+
+	slog.Info("sending discord notification",
+		"serverID", job.ServerID,
+		"status", job.Status,
+		"guildID", job.GuildID,
+		"channelID", job.ChannelID,
+		"hasRole", job.RoleID != "",
+		"messageId", rec.MessageId,
+	)
+
+	if err := h.discord.SendChannelMessage(ctx, job.ChannelID, content, job.RoleID); err != nil {
+		return fmt.Errorf("send discord message: %w", err)
+	}
+
+	slog.Info("sent discord notification",
+		"serverID", job.ServerID,
+		"status", job.Status,
+		"guildID", job.GuildID,
+		"channelID", job.ChannelID,
+		"messageId", rec.MessageId,
+	)
+
+	return nil
+}
+
+func formatDiscordContent(job models.GuildNotifyJob) string {
+	mention := ""
+	if job.RoleID != "" {
+		mention = fmt.Sprintf("<@&%s> ", job.RoleID)
+	}
+	return fmt.Sprintf("%sServer `%s` is now **%s**.", mention, job.ServerID, job.Status)
+}
+
+type discordHTTPClient struct {
+	httpClient *http.Client
+	baseURL    string
+	botToken   string
+}
+
+type discordMessageRequest struct {
+	Content         string               `json:"content"`
+	AllowedMentions discordAllowedMentions `json:"allowed_mentions,omitempty"`
+}
+
+type discordAllowedMentions struct {
+	Parse []string `json:"parse,omitempty"`
+	Roles []string `json:"roles,omitempty"`
+}
+
+func (c *discordHTTPClient) SendChannelMessage(ctx context.Context, channelID, content, roleID string) error {
+	reqBody := discordMessageRequest{
+		Content: content,
+		AllowedMentions: discordAllowedMentions{
+			Parse: []string{}, // don't allow accidental @everyone/@here
+		},
+	}
+	if roleID != "" {
+		reqBody.AllowedMentions.Roles = []string{roleID}
+	}
+
+	b, err := json.Marshal(reqBody)
+	if err != nil {
+		return fmt.Errorf("marshal discord message request: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/channels/%s/messages", c.baseURL, channelID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(b))
+	if err != nil {
+		return fmt.Errorf("create discord request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bot "+c.botToken)
+	req.Header.Set("Content-Type", "application/json")
+
+	res, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("discord request failed: %w", err)
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode >= 200 && res.StatusCode < 300 {
+		return nil
+	}
+
+	body, _ := io.ReadAll(io.LimitReader(res.Body, 8*1024))
+	return fmt.Errorf("discord non-2xx response: %d body=%q", res.StatusCode, string(body))
+}
+
+func main() {
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+	handler := NewHandler()
+	lambda.Start(handler.HandleRequest)
+}
