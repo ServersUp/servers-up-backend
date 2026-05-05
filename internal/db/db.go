@@ -115,7 +115,6 @@ func (db *Database) DeleteSubscriptionByChannel(ctx context.Context, serverID, c
 				return false, fmt.Errorf("failed to delete subscription: %w", err)
 			}
 			found = true
-			break
 		}
 	}
 
