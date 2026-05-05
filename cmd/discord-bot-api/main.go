@@ -57,10 +57,23 @@ func NewHandler(ctx context.Context) *Handler {
 		os.Exit(1)
 	}
 
+	publicKeyPath := os.Getenv("DISCORD_BOT_PUBLIC_KEY_PATH")
+	if publicKeyPath == "" {
+		slog.Error("missing required env DISCORD_BOT_PUBLIC_KEY_PATH")
+		os.Exit(1)
+	}
+
+	provider := config.NewProvider(ssm.NewFromConfig(cfg), s3.NewFromConfig(cfg))
+	publicKey, err := provider.GetSecret(ctx, publicKeyPath)
+	if err != nil {
+		slog.Error("failed to load discord public key from ssm", "error", err, "path", publicKeyPath)
+		os.Exit(1)
+	}
+
 	return &Handler{
 		database:         db.NewDatabase(dynamodb.NewFromConfig(cfg), os.Getenv("DDB_SUBSCRIPTIONS_TABLE_NAME")),
-		configProvider:   config.NewProvider(ssm.NewFromConfig(cfg), s3.NewFromConfig(cfg)),
-		discordPublicKey: os.Getenv("DISCORD_API_PUBLIC_KEY"),
+		configProvider:   provider,
+		discordPublicKey: publicKey,
 	}
 }
 
