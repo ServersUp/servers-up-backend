@@ -36,3 +36,13 @@ type Subscription struct {
 	ChannelID string `json:"channel_id" dynamodbav:"channelId"`
 	Mention   string `json:"mention" dynamodbav:"mention"`
 }
+
+// GuildNotifyJob is the payload sent to the Discord guild notify SQS queue when
+// a watched game server transitions between UP and DOWN (or similar states).
+type GuildNotifyJob struct {
+	ServerID  string `json:"serverId"`
+	Status    string `json:"status"`
+	GuildID   string `json:"guildId"`
+	ChannelID string `json:"channelId"`
+	RoleID    string `json:"roleId,omitempty"`
+}
