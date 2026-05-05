@@ -34,11 +34,6 @@ type Handler struct {
 	serverMappingKey string
 }
 
-const (
-	defaultConfigBucket     = "serversup-config"
-	defaultServerMappingKey = "server-mapping.json"
-)
-
 func NewHandler() *Handler {
 	tokenPath := os.Getenv("DISCORD_BOT_TOKEN_PATH")
 	if tokenPath == "" {
@@ -61,11 +56,13 @@ func NewHandler() *Handler {
 
 	bucket := os.Getenv("CONFIG_BUCKET")
 	if bucket == "" {
-		bucket = defaultConfigBucket
+		slog.Error("missing required env CONFIG_BUCKET")
+		os.Exit(1)
 	}
 	key := os.Getenv("SERVER_MAPPING_PATH")
 	if key == "" {
-		key = defaultServerMappingKey
+		slog.Error("missing required env SERVER_MAPPING_PATH")
+		os.Exit(1)
 	}
 
 	return &Handler{
