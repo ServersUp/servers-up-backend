@@ -11,9 +11,13 @@ import (
 	"os"
 	"time"
 
+	"github.com/ServersUp/servers-up-backend/internal/config"
 	"github.com/ServersUp/servers-up-backend/internal/models"
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/ssm"
 )
 
 type DiscordClient interface {
@@ -25,9 +29,22 @@ type Handler struct {
 }
 
 func NewHandler() *Handler {
-	token := os.Getenv("DISCORD_BOT_TOKEN")
-	if token == "" {
-		slog.Error("missing required env DISCORD_BOT_TOKEN")
+	tokenPath := os.Getenv("DISCORD_BOT_TOKEN_PATH")
+	if tokenPath == "" {
+		slog.Error("missing required env DISCORD_BOT_TOKEN_PATH")
+		os.Exit(1)
+	}
+
+	cfg, err := awsconfig.LoadDefaultConfig(context.Background())
+	if err != nil {
+		slog.Error("unable to load AWS SDK config", "error", err)
+		os.Exit(1)
+	}
+
+	provider := config.NewProvider(ssm.NewFromConfig(cfg), s3.NewFromConfig(cfg))
+	token, err := provider.GetSecret(context.Background(), tokenPath)
+	if err != nil {
+		slog.Error("failed to load discord bot token from ssm", "error", err, "path", tokenPath)
 		os.Exit(1)
 	}
 
