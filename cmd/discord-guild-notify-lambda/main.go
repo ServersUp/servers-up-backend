@@ -9,10 +9,12 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/ServersUp/servers-up-backend/internal/config"
 	"github.com/ServersUp/servers-up-backend/internal/models"
+	"github.com/ServersUp/servers-up-backend/internal/servermap"
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -25,7 +27,11 @@ type DiscordClient interface {
 }
 
 type Handler struct {
-	discord DiscordClient
+	discord         DiscordClient
+	configProvider  *config.Provider
+	serverMapping   *servermap.Mapping
+	configBucket    string
+	serverMappingKey string
 }
 
 func NewHandler() *Handler {
@@ -48,12 +54,26 @@ func NewHandler() *Handler {
 		os.Exit(1)
 	}
 
+	bucket := os.Getenv("CONFIG_BUCKET")
+	if bucket == "" {
+		slog.Error("missing required env CONFIG_BUCKET")
+		os.Exit(1)
+	}
+	key := os.Getenv("SERVER_MAPPING_PATH")
+	if key == "" {
+		slog.Error("missing required env SERVER_MAPPING_PATH")
+		os.Exit(1)
+	}
+
 	return &Handler{
-		discord: &discordHTTPClient{
+		discord:        &discordHTTPClient{
 			httpClient: &http.Client{Timeout: 10 * time.Second},
 			baseURL:    "https://discord.com/api/v10",
 			botToken:   token,
 		},
+		configProvider:  provider,
+		configBucket:    bucket,
+		serverMappingKey: key,
 	}
 }
 
@@ -85,7 +105,8 @@ func (h *Handler) processRecord(ctx context.Context, rec events.SQSMessage) erro
 		return fmt.Errorf("invalid guild notify job: missing required fields (serverId/status/channelId)")
 	}
 
-	content := formatDiscordContent(job)
+	serverLabel := h.humanServerName(ctx, job.ServerID)
+	content := formatDiscordContent(job, serverLabel)
 
 	slog.Info("sending discord notification",
 		"serverID", job.ServerID,
@@ -111,12 +132,60 @@ func (h *Handler) processRecord(ctx context.Context, rec events.SQSMessage) erro
 	return nil
 }
 
-func formatDiscordContent(job models.GuildNotifyJob) string {
+func formatDiscordContent(job models.GuildNotifyJob, serverLabel string) string {
 	mention := ""
 	if job.RoleID != "" {
 		mention = fmt.Sprintf("<@&%s> ", job.RoleID)
 	}
-	return fmt.Sprintf("%sServer `%s` is now **%s**.", mention, job.ServerID, job.Status)
+	if serverLabel == "" {
+		serverLabel = job.ServerID
+	}
+	return fmt.Sprintf("%sServer **%s** is now **%s**.", mention, serverLabel, job.Status)
+}
+
+func (h *Handler) humanServerName(ctx context.Context, technicalServerID string) string {
+	// Expected: provider#region#identifier
+	parts := strings.Split(technicalServerID, "#")
+	if len(parts) != 3 {
+		return technicalServerID
+	}
+	provider := parts[0]
+	region := parts[1]
+	identifier := parts[2]
+
+	mapping, err := h.getServerMapping(ctx)
+	if err != nil {
+		slog.Warn("failed to load server mapping; falling back to technical server id", "error", err)
+		return technicalServerID
+	}
+
+	for _, game := range mapping.Games {
+		if game.Provider != provider {
+			continue
+		}
+		for serverKey, server := range game.Servers {
+			if server.Region == region && fmt.Sprint(server.Identifier) == identifier {
+				return serverKey
+			}
+		}
+	}
+
+	return technicalServerID
+}
+
+func (h *Handler) getServerMapping(ctx context.Context) (*servermap.Mapping, error) {
+	if h.serverMapping != nil {
+		return h.serverMapping, nil
+	}
+	if h.configProvider == nil {
+		return nil, fmt.Errorf("missing config provider")
+	}
+	var m servermap.Mapping
+	if err := h.configProvider.LoadJSONFromS3(ctx, h.configBucket, h.serverMappingKey, &m); err != nil {
+		return nil, err
+	}
+	h.serverMapping = &m
+	return h.serverMapping, nil
 }
 
 type discordHTTPClient struct {
