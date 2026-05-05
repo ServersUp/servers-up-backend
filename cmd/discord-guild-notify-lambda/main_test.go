@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/ServersUp/servers-up-backend/internal/models"
+	"github.com/ServersUp/servers-up-backend/internal/servermap"
 	"github.com/aws/aws-lambda-go/events"
 )
 
@@ -54,6 +55,7 @@ func TestHandleRequest_success_singleMessage(t *testing.T) {
 	if md.calls[0].channelID != "c" {
 		t.Fatalf("channelID=%q", md.calls[0].channelID)
 	}
+	// Without a server mapping configured, the consumer falls back to the technical serverId.
 	if !strings.Contains(md.calls[0].content, "battlenet#us#11") || !strings.Contains(md.calls[0].content, "**DOWN**") {
 		t.Fatalf("unexpected content: %q", md.calls[0].content)
 	}
@@ -85,6 +87,48 @@ func TestHandleRequest_success_withRoleMention(t *testing.T) {
 	}
 	if md.calls[0].roleID != "777" {
 		t.Fatalf("expected roleID passed to client, got %q", md.calls[0].roleID)
+	}
+}
+
+func TestHandleRequest_usesHumanServerNameWhenMappingAvailable(t *testing.T) {
+	t.Parallel()
+
+	md := &mockDiscord{}
+	h := &Handler{
+		discord: md,
+		serverMapping: &servermap.Mapping{
+			Games: map[string]servermap.Game{
+				"wow": {
+					Provider: "battlenet",
+					Servers: map[string]servermap.Server{
+						"illidan": {Region: "us", Identifier: 57},
+					},
+				},
+			},
+		},
+	}
+
+	ev := events.SQSEvent{
+		Records: []events.SQSMessage{
+			{MessageId: "m1", Body: `{"serverId":"battlenet#us#57","status":"DOWN","guildId":"g","channelId":"c","roleId":""}`},
+		},
+	}
+
+	resp, err := h.HandleRequest(context.Background(), ev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.BatchItemFailures) != 0 {
+		t.Fatalf("expected no failures, got %+v", resp.BatchItemFailures)
+	}
+	if len(md.calls) != 1 {
+		t.Fatalf("expected 1 discord call, got %d", len(md.calls))
+	}
+	if !strings.Contains(md.calls[0].content, "illidan") {
+		t.Fatalf("expected human server name in content, got %q", md.calls[0].content)
+	}
+	if strings.Contains(md.calls[0].content, "battlenet#us#57") {
+		t.Fatalf("expected technical serverId not to be used when mapping exists, got %q", md.calls[0].content)
 	}
 }
 
@@ -189,12 +233,12 @@ func TestProcessRecord_propagatesDiscordError(t *testing.T) {
 func TestFormatDiscordContent(t *testing.T) {
 	t.Parallel()
 
-	got := formatDiscordContent(models.GuildNotifyJob{ServerID: "s", Status: "UP"})
-	if !strings.Contains(got, "`s`") || !strings.Contains(got, "**UP**") {
+	got := formatDiscordContent(models.GuildNotifyJob{ServerID: "s", Status: "UP"}, "s")
+	if !strings.Contains(got, "**s**") || !strings.Contains(got, "**UP**") {
 		t.Fatalf("unexpected: %q", got)
 	}
 
-	got = formatDiscordContent(models.GuildNotifyJob{ServerID: "s", Status: "DOWN", RoleID: "1"})
+	got = formatDiscordContent(models.GuildNotifyJob{ServerID: "s", Status: "DOWN", RoleID: "1"}, "s")
 	if !strings.HasPrefix(got, "<@&1> ") {
 		t.Fatalf("unexpected: %q", got)
 	}
