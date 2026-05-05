@@ -85,13 +85,16 @@ func TestHandleRequest(t *testing.T) {
 	})
 
 	t.Run("Subscribe (Type 2)", func(t *testing.T) {
-		body := `{"type": 2, "guild_id": "guild-1", "channel_id": "chan-1", "data": {"name": "subscribe", "options": [{"name": "game", "value": "wow"}, {"name": "server", "value": "illidan"}]}}`
+		body := `{"type": 2, "guild_id": "guild-1", "channel_id": "chan-1", "data": {"name": "subscribe", "options": [{"name": "game", "value": "wow"}, {"name": "server", "value": "illidan"}, {"name": "role", "value": "123"}]}}`
 		timestamp := "12345"
 		sig := hex.EncodeToString(ed25519.Sign(priv, []byte(timestamp+body)))
 
 		mockDB.AddFunc = func(ctx context.Context, sub models.Subscription) error {
 			if sub.ServerID != "battlenet#us#57" {
 				return fmt.Errorf("unexpected server ID: %s", sub.ServerID)
+			}
+			if sub.Mention != "<@&123>" {
+				return fmt.Errorf("unexpected mention: %s", sub.Mention)
 			}
 			return nil
 		}
@@ -112,6 +115,41 @@ func TestHandleRequest(t *testing.T) {
 		json.Unmarshal([]byte(resp.Body), &discordResp)
 		if discordResp.Data.Content == "" {
 			t.Error("expected content in response")
+		}
+	})
+
+	t.Run("Unsubscribe removes all channel subscriptions (Type 2)", func(t *testing.T) {
+		body := `{"type": 2, "guild_id": "guild-1", "channel_id": "chan-1", "data": {"name": "unsubscribe", "options": [{"name": "game", "value": "wow"}, {"name": "server", "value": "illidan"}]}}`
+		timestamp := "12345"
+		sig := hex.EncodeToString(ed25519.Sign(priv, []byte(timestamp+body)))
+
+		var calls int
+		mockDB.DeleteFunc = func(ctx context.Context, serverID, channelID string) (bool, error) {
+			calls++
+			if serverID != "battlenet#us#57" {
+				return false, fmt.Errorf("unexpected serverID: %s", serverID)
+			}
+			if channelID != "chan-1" {
+				return false, fmt.Errorf("unexpected channelID: %s", channelID)
+			}
+			// We can't see the internal per-item deletes from this handler-level mock,
+			// but we can at least verify the handler calls deletion once for the channel.
+			return true, nil
+		}
+
+		resp, _ := handler.HandleRequest(context.Background(), events.LambdaFunctionURLRequest{
+			Headers: map[string]string{
+				"x-signature-ed25519":   sig,
+				"x-signature-timestamp": timestamp,
+			},
+			Body: body,
+		})
+
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("expected 200, got %d", resp.StatusCode)
+		}
+		if calls != 1 {
+			t.Fatalf("expected DeleteSubscriptionByChannel called once, got %d", calls)
 		}
 	})
 
