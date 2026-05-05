@@ -159,13 +159,13 @@ func (h *Handler) humanServerName(ctx context.Context, technicalServerID string)
 		return technicalServerID
 	}
 
-	for _, game := range mapping.Games {
+	for gameID, game := range mapping.Games {
 		if game.Provider != provider {
 			continue
 		}
 		for serverKey, server := range game.Servers {
 			if server.Region == region && fmt.Sprint(server.Identifier) == identifier {
-				return serverKey
+				return fmt.Sprintf("%s-%s", gameID, serverKey)
 			}
 		}
 	}

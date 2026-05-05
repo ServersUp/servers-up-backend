@@ -124,8 +124,8 @@ func TestHandleRequest_usesHumanServerNameWhenMappingAvailable(t *testing.T) {
 	if len(md.calls) != 1 {
 		t.Fatalf("expected 1 discord call, got %d", len(md.calls))
 	}
-	if !strings.Contains(md.calls[0].content, "illidan") {
-		t.Fatalf("expected human server name in content, got %q", md.calls[0].content)
+	if !strings.Contains(md.calls[0].content, "wow-illidan") {
+		t.Fatalf("expected game+server in content, got %q", md.calls[0].content)
 	}
 	if strings.Contains(md.calls[0].content, "battlenet#us#57") {
 		t.Fatalf("expected technical serverId not to be used when mapping exists, got %q", md.calls[0].content)
