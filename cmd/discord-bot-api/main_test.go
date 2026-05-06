@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/ServersUp/servers-up-backend/internal/discord"
@@ -18,14 +19,18 @@ import (
 // MockDatabase implements the Database interface for testing.
 type MockDatabase struct {
 	AddFunc    func(ctx context.Context, sub models.Subscription) error
-	DeleteFunc func(ctx context.Context, serverID, channelID string) (bool, error)
+	DeleteFunc func(ctx context.Context, guildID, channelID, serverID string) (int, error)
+	ListFunc   func(ctx context.Context, guildID string) ([]models.Subscription, error)
 }
 
 func (m *MockDatabase) AddSubscription(ctx context.Context, sub models.Subscription) error {
 	return m.AddFunc(ctx, sub)
 }
-func (m *MockDatabase) DeleteSubscriptionByChannel(ctx context.Context, serverID, channelID string) (bool, error) {
-	return m.DeleteFunc(ctx, serverID, channelID)
+func (m *MockDatabase) DeleteGuildChannelSubscriptionsForServer(ctx context.Context, guildID, channelID, serverID string) (int, error) {
+	return m.DeleteFunc(ctx, guildID, channelID, serverID)
+}
+func (m *MockDatabase) ListSubscriptionsByGuild(ctx context.Context, guildID string) ([]models.Subscription, error) {
+	return m.ListFunc(ctx, guildID)
 }
 
 // MockConfig implements the ConfigProvider interface for testing.
@@ -124,17 +129,18 @@ func TestHandleRequest(t *testing.T) {
 		sig := hex.EncodeToString(ed25519.Sign(priv, []byte(timestamp+body)))
 
 		var calls int
-		mockDB.DeleteFunc = func(ctx context.Context, serverID, channelID string) (bool, error) {
+		mockDB.DeleteFunc = func(ctx context.Context, guildID, channelID, serverID string) (int, error) {
 			calls++
 			if serverID != "battlenet#us#57" {
-				return false, fmt.Errorf("unexpected serverID: %s", serverID)
+				return 0, fmt.Errorf("unexpected serverID: %s", serverID)
 			}
 			if channelID != "chan-1" {
-				return false, fmt.Errorf("unexpected channelID: %s", channelID)
+				return 0, fmt.Errorf("unexpected channelID: %s", channelID)
 			}
-			// We can't see the internal per-item deletes from this handler-level mock,
-			// but we can at least verify the handler calls deletion once for the channel.
-			return true, nil
+			if guildID != "guild-1" {
+				return 0, fmt.Errorf("unexpected guildID: %s", guildID)
+			}
+			return 2, nil
 		}
 
 		resp, _ := handler.HandleRequest(context.Background(), events.LambdaFunctionURLRequest{
@@ -149,7 +155,45 @@ func TestHandleRequest(t *testing.T) {
 			t.Errorf("expected 200, got %d", resp.StatusCode)
 		}
 		if calls != 1 {
-			t.Fatalf("expected DeleteSubscriptionByChannel called once, got %d", calls)
+			t.Fatalf("expected DeleteGuildChannelSubscriptionsForServer called once, got %d", calls)
+		}
+	})
+
+	t.Run("Subscriptions list (Type 2)", func(t *testing.T) {
+		body := `{"type": 2, "guild_id": "guild-1", "channel_id": "chan-9", "data": {"name": "subscriptions"}}`
+		timestamp := "12345"
+		sig := hex.EncodeToString(ed25519.Sign(priv, []byte(timestamp+body)))
+
+		mockDB.ListFunc = func(ctx context.Context, guildID string) ([]models.Subscription, error) {
+			if guildID != "guild-1" {
+				return nil, fmt.Errorf("unexpected guildID: %s", guildID)
+			}
+			return []models.Subscription{
+				{ServerID: "battlenet#us#57", GuildID: "guild-1", ChannelID: "chan-1", Mention: ""},
+				{ServerID: "battlenet#us#57", GuildID: "guild-1", ChannelID: "chan-1", Mention: "<@&123>"},
+				{ServerID: "battlenet#us#57", GuildID: "guild-1", ChannelID: "chan-2", Mention: ""},
+			}, nil
+		}
+
+		resp, _ := handler.HandleRequest(context.Background(), events.LambdaFunctionURLRequest{
+			Headers: map[string]string{
+				"x-signature-ed25519":   sig,
+				"x-signature-timestamp": timestamp,
+			},
+			Body: body,
+		})
+
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("expected 200, got %d", resp.StatusCode)
+		}
+
+		var discordResp discord.InteractionResponse
+		json.Unmarshal([]byte(resp.Body), &discordResp)
+		if !strings.Contains(discordResp.Data.Content, "<#chan-1>") {
+			t.Fatalf("expected channel grouping, got %q", discordResp.Data.Content)
+		}
+		if !strings.Contains(discordResp.Data.Content, "wow-illidan") {
+			t.Fatalf("expected human server label, got %q", discordResp.Data.Content)
 		}
 	})
 
