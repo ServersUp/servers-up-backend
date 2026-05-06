@@ -100,7 +100,14 @@ func (h *Handler) HandleRequest(ctx context.Context, event events.CloudWatchEven
 
 			// Store the status using the generalized database layer.
 			if err := h.database.SaveServerStatus(ctx, "wow", "battlenet", bnetConfig.Region, r.ConnectedRealmID, statusType); err != nil {
+				if err == db.ErrStatusUnchanged {
+					// Status is unchanged; avoid counting/logging this as an error.
+					atomic.AddInt32(&successCount, 1)
+					return
+				}
 				slog.Error("failed to save status for realm", "realm", r.Name, "error", err)
+				atomic.AddInt32(&errorCount, 1)
+				return
 			}
 
 			atomic.AddInt32(&successCount, 1)

@@ -18,8 +18,6 @@ type GameServerStatus struct {
 
 	// LastUpdatedAt tracks when the status value itself last changed.
 	LastUpdatedAt int64 `json:"lastUpdatedAt" dynamodbav:"lastUpdatedAt"`
-	// PolledAt tracks the timestamp of the last check, regardless of status change.
-	PolledAt int64 `json:"polledAt" dynamodbav:"polledAt"`
 
 	// Meta allows for provider-specific or extensible metadata without breaking the schema.
 	Meta map[string]any `json:"meta,omitempty" dynamodbav:"meta,omitempty"`
