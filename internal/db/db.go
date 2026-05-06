@@ -46,7 +46,6 @@ func (db *Database) SaveServerStatus(ctx context.Context, gameID, provider, regi
 	serverID := serverid.Generate(provider, region, identifier)
 
 	// Read-before-write to avoid issuing a write request when unchanged.
-	// (ConditionalCheckFailedException still counts as a write request in on-demand billing.)
 	getOut, err := db.client.GetItem(ctx, &dynamodb.GetItemInput{
 		TableName: aws.String(db.tableName),
 		Key: map[string]types.AttributeValue{
