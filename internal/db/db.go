@@ -15,15 +15,22 @@ import (
 )
 
 type Database struct {
-	client    *dynamodb.Client
+	client    dynamodbAPI
 	tableName string
+}
+
+type dynamodbAPI interface {
+	UpdateItem(ctx context.Context, params *dynamodb.UpdateItemInput, optFns ...func(*dynamodb.Options)) (*dynamodb.UpdateItemOutput, error)
+	PutItem(ctx context.Context, params *dynamodb.PutItemInput, optFns ...func(*dynamodb.Options)) (*dynamodb.PutItemOutput, error)
+	Query(ctx context.Context, params *dynamodb.QueryInput, optFns ...func(*dynamodb.Options)) (*dynamodb.QueryOutput, error)
+	DeleteItem(ctx context.Context, params *dynamodb.DeleteItemInput, optFns ...func(*dynamodb.Options)) (*dynamodb.DeleteItemOutput, error)
 }
 
 const guildIDIndexName = "GuildIdIndex"
 
 var ErrStatusUnchanged = errors.New("status unchanged")
 
-func NewDatabase(client *dynamodb.Client, tableName string) *Database {
+func NewDatabase(client dynamodbAPI, tableName string) *Database {
 	return &Database{
 		client:    client,
 		tableName: tableName,
