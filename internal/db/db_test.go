@@ -13,9 +13,9 @@ type fakeDDB struct {
 	getIn   *dynamodb.GetItemInput
 	getOut  *dynamodb.GetItemOutput
 	getErr  error
-	updateIn  *dynamodb.UpdateItemInput
-	updateOut *dynamodb.UpdateItemOutput
-	updateErr error
+	putIn   *dynamodb.PutItemInput
+	putOut  *dynamodb.PutItemOutput
+	putErr  error
 }
 
 func (f *fakeDDB) GetItem(ctx context.Context, params *dynamodb.GetItemInput, optFns ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error) {
@@ -29,19 +29,15 @@ func (f *fakeDDB) GetItem(ctx context.Context, params *dynamodb.GetItemInput, op
 	return &dynamodb.GetItemOutput{}, nil
 }
 
-func (f *fakeDDB) UpdateItem(ctx context.Context, params *dynamodb.UpdateItemInput, optFns ...func(*dynamodb.Options)) (*dynamodb.UpdateItemOutput, error) {
-	f.updateIn = params
-	if f.updateErr != nil {
-		return nil, f.updateErr
-	}
-	if f.updateOut != nil {
-		return f.updateOut, nil
-	}
-	return &dynamodb.UpdateItemOutput{}, nil
-}
-
 func (f *fakeDDB) PutItem(ctx context.Context, params *dynamodb.PutItemInput, optFns ...func(*dynamodb.Options)) (*dynamodb.PutItemOutput, error) {
-	panic("not used in these tests")
+	f.putIn = params
+	if f.putErr != nil {
+		return nil, f.putErr
+	}
+	if f.putOut != nil {
+		return f.putOut, nil
+	}
+	return &dynamodb.PutItemOutput{}, nil
 }
 func (f *fakeDDB) Query(ctx context.Context, params *dynamodb.QueryInput, optFns ...func(*dynamodb.Options)) (*dynamodb.QueryOutput, error) {
 	panic("not used in these tests")
@@ -50,7 +46,7 @@ func (f *fakeDDB) DeleteItem(ctx context.Context, params *dynamodb.DeleteItemInp
 	panic("not used in these tests")
 }
 
-func TestSaveServerStatus_setsConditionalUpdate(t *testing.T) {
+func TestSaveServerStatus_readsThenPuts(t *testing.T) {
 	t.Parallel()
 
 	f := &fakeDDB{}
@@ -63,11 +59,11 @@ func TestSaveServerStatus_setsConditionalUpdate(t *testing.T) {
 	if f.getIn == nil {
 		t.Fatal("expected GetItem to be called")
 	}
-	if f.updateIn == nil {
-		t.Fatal("expected UpdateItem to be called")
+	if f.putIn == nil {
+		t.Fatal("expected PutItem to be called")
 	}
-	if f.updateIn.Key == nil || f.updateIn.Key["gameId"] == nil || f.updateIn.Key["serverId"] == nil {
-		t.Fatalf("expected Key to include gameId and serverId, got %#v", f.updateIn.Key)
+	if f.putIn.Item == nil {
+		t.Fatal("expected PutItem Item to be set")
 	}
 }
 
@@ -87,8 +83,8 @@ func TestSaveServerStatus_returnsErrStatusUnchanged(t *testing.T) {
 	if !errors.Is(err, ErrStatusUnchanged) {
 		t.Fatalf("expected ErrStatusUnchanged, got %v", err)
 	}
-	if f.updateIn != nil {
-		t.Fatal("expected UpdateItem NOT to be called when status unchanged")
+	if f.putIn != nil {
+		t.Fatal("expected PutItem NOT to be called when status unchanged")
 	}
 }
 
@@ -123,8 +119,8 @@ func TestSaveServerStatus_writesWhenStatusChanges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if f.updateIn == nil {
-		t.Fatal("expected UpdateItem to be called when status changes")
+	if f.putIn == nil {
+		t.Fatal("expected PutItem to be called when status changes")
 	}
 }
 
