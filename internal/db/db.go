@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -20,6 +21,8 @@ type Database struct {
 
 const guildIDIndexName = "GuildIdIndex"
 
+var ErrStatusUnchanged = errors.New("status unchanged")
+
 func NewDatabase(client *dynamodb.Client, tableName string) *Database {
 	return &Database{
 		client:    client,
@@ -35,28 +38,37 @@ func (db *Database) SaveServerStatus(ctx context.Context, gameID, provider, regi
 	// ServerID is constructed to be unique across all providers and regions.
 	serverID := serverid.Generate(provider, region, identifier)
 
-	serverStatus := models.GameServerStatus{
-		GameID:        gameID,
-		ServerID:      serverID,
-		Provider:      provider,
-		Region:        region,
-		Status:        status,
-		LastUpdatedAt: now, // Status changes tracking logic should be implemented by the caller or a separate service.
-		PolledAt:      now,
-	}
-
-	item, err := attributevalue.MarshalMap(serverStatus)
-	if err != nil {
-		return fmt.Errorf("failed to marshal status for %s: %w", serverID, err)
-	}
-
-	_, err = db.client.PutItem(ctx, &dynamodb.PutItemInput{
+	// Only write when the status changes (or item doesn't exist yet).
+	// This prevents consuming WRUs on every poll when realms are stable.
+	_, err := db.client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
 		TableName: aws.String(db.tableName),
-		Item:      item,
+		Key: map[string]types.AttributeValue{
+			"gameId":   &types.AttributeValueMemberS{Value: gameID},
+			"serverId": &types.AttributeValueMemberS{Value: serverID},
+		},
+		UpdateExpression: aws.String(
+			"SET #provider = :p, #region = :r, #status = :s, #lastUpdatedAt = :now",
+		),
+		ExpressionAttributeNames: map[string]string{
+			"#provider":      "provider",
+			"#region":        "region",
+			"#status":        "status",
+			"#lastUpdatedAt": "lastUpdatedAt",
+		},
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":p":   &types.AttributeValueMemberS{Value: provider},
+			":r":   &types.AttributeValueMemberS{Value: region},
+			":s":   &types.AttributeValueMemberS{Value: status},
+			":now": &types.AttributeValueMemberN{Value: fmt.Sprint(now)},
+		},
+		ConditionExpression: aws.String("attribute_not_exists(#status) OR #status <> :s"),
 	})
-
 	if err != nil {
-		return fmt.Errorf("dynamodb put error for %s: %w", serverID, err)
+		var cfe *types.ConditionalCheckFailedException
+		if errors.As(err, &cfe) {
+			return ErrStatusUnchanged
+		}
+		return fmt.Errorf("dynamodb update error for %s: %w", serverID, err)
 	}
 
 	return nil
