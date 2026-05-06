@@ -143,9 +143,22 @@ func (h *Handler) HandleRequest(ctx context.Context, request events.LambdaFuncti
 }
 
 func (h *Handler) handleSubscribe(ctx context.Context, interaction discord.Interaction, data discord.InteractionData) (events.LambdaFunctionURLResponse, error) {
-	gameName := servermap.NormalizeKey(h.getOption(data.Options, "game"))
-	serverName := servermap.NormalizeKey(h.getOption(data.Options, "server"))
+	rawGame := h.getOption(data.Options, "game")
+	rawServer := h.getOption(data.Options, "server")
 	roleID := h.getOption(data.Options, "role")
+
+	gameName := servermap.NormalizeKey(rawGame)
+	serverName := servermap.NormalizeKey(rawServer)
+
+	slog.Info("subscribe request received",
+		"guildID", interaction.GuildID,
+		"channelID", interaction.ChannelID,
+		"roleID", roleID,
+		"rawGame", rawGame,
+		"rawServer", rawServer,
+		"gameName", gameName,
+		"serverName", serverName,
+	)
 
 	mapping, err := h.loadServerMapping(ctx)
 	if err != nil {
@@ -155,6 +168,16 @@ func (h *Handler) handleSubscribe(ctx context.Context, interaction discord.Inter
 
 	gameID, game, serverKey, server, lookupErr := mapping.Lookup(gameName, serverName)
 	if lookupErr != nil {
+		slog.Warn("subscribe request lookup failed",
+			"error", lookupErr,
+			"guildID", interaction.GuildID,
+			"channelID", interaction.ChannelID,
+			"roleID", roleID,
+			"rawGame", rawGame,
+			"rawServer", rawServer,
+			"gameName", gameName,
+			"serverName", serverName,
+		)
 		return h.discordResponse(h.formatLookupError("subscribe", mapping, lookupErr, gameName, serverName))
 	}
 
@@ -165,6 +188,18 @@ func (h *Handler) handleSubscribe(ctx context.Context, interaction discord.Inter
 		mention = fmt.Sprintf("<@&%s>", roleID)
 	}
 
+	slog.Info("subscribe request resolved",
+		"guildID", interaction.GuildID,
+		"channelID", interaction.ChannelID,
+		"roleID", roleID,
+		"gameID", gameID,
+		"provider", game.Provider,
+		"region", server.Region,
+		"serverKey", serverKey,
+		"serverIdentifier", fmt.Sprint(server.Identifier),
+		"technicalServerID", technicalID,
+	)
+
 	sub := models.Subscription{
 		ServerID:       technicalID,
 		SubscriptionID: uuid.New().String(),
@@ -174,9 +209,26 @@ func (h *Handler) handleSubscribe(ctx context.Context, interaction discord.Inter
 	}
 
 	if err := h.database.AddSubscription(ctx, sub); err != nil {
-		slog.Error("failed to add subscription", "error", err, "serverID", technicalID)
+		slog.Error("failed to add subscription",
+			"error", err,
+			"guildID", interaction.GuildID,
+			"channelID", interaction.ChannelID,
+			"roleID", roleID,
+			"gameID", gameID,
+			"serverKey", serverKey,
+			"technicalServerID", technicalID,
+		)
 		return h.discordResponse("Failed to create subscription. Please try again later.")
 	}
+
+	slog.Info("subscription created",
+		"guildID", interaction.GuildID,
+		"channelID", interaction.ChannelID,
+		"roleID", roleID,
+		"gameID", gameID,
+		"serverKey", serverKey,
+		"technicalServerID", technicalID,
+	)
 
 	channelMention := fmt.Sprintf("<#%s>", interaction.ChannelID)
 	if mention != "" {
@@ -186,8 +238,19 @@ func (h *Handler) handleSubscribe(ctx context.Context, interaction discord.Inter
 }
 
 func (h *Handler) handleUnsubscribe(ctx context.Context, interaction discord.Interaction, data discord.InteractionData) (events.LambdaFunctionURLResponse, error) {
-	gameName := servermap.NormalizeKey(h.getOption(data.Options, "game"))
-	serverName := servermap.NormalizeKey(h.getOption(data.Options, "server"))
+	rawGame := h.getOption(data.Options, "game")
+	rawServer := h.getOption(data.Options, "server")
+	gameName := servermap.NormalizeKey(rawGame)
+	serverName := servermap.NormalizeKey(rawServer)
+
+	slog.Info("unsubscribe request received",
+		"guildID", interaction.GuildID,
+		"channelID", interaction.ChannelID,
+		"rawGame", rawGame,
+		"rawServer", rawServer,
+		"gameName", gameName,
+		"serverName", serverName,
+	)
 
 	mapping, err := h.loadServerMapping(ctx)
 	if err != nil {
@@ -197,6 +260,15 @@ func (h *Handler) handleUnsubscribe(ctx context.Context, interaction discord.Int
 
 	gameID, game, serverKey, server, lookupErr := mapping.Lookup(gameName, serverName)
 	if lookupErr != nil {
+		slog.Warn("unsubscribe request lookup failed",
+			"error", lookupErr,
+			"guildID", interaction.GuildID,
+			"channelID", interaction.ChannelID,
+			"rawGame", rawGame,
+			"rawServer", rawServer,
+			"gameName", gameName,
+			"serverName", serverName,
+		)
 		return h.discordResponse(h.formatLookupError("unsubscribe", mapping, lookupErr, gameName, serverName))
 	}
 
@@ -204,13 +276,38 @@ func (h *Handler) handleUnsubscribe(ctx context.Context, interaction discord.Int
 
 	found, err := h.database.DeleteSubscriptionByChannel(ctx, technicalID, interaction.ChannelID)
 	if err != nil {
-		slog.Error("failed to delete subscription", "error", err, "serverID", technicalID, "channelID", interaction.ChannelID)
+		slog.Error("failed to delete subscription",
+			"error", err,
+			"guildID", interaction.GuildID,
+			"channelID", interaction.ChannelID,
+			"gameID", gameID,
+			"serverKey", serverKey,
+			"technicalServerID", technicalID,
+		)
 		return h.discordResponse("An error occurred while trying to unsubscribe.")
 	}
 
 	if !found {
+		slog.Info("unsubscribe requested but no matching subscription found",
+			"guildID", interaction.GuildID,
+			"channelID", interaction.ChannelID,
+			"gameID", gameID,
+			"serverKey", serverKey,
+			"technicalServerID", technicalID,
+		)
 		return h.discordResponse(fmt.Sprintf("No subscription found for **%s** / **%s** in this channel.", gameID, serverKey))
 	}
+
+	slog.Info("unsubscribed channel from server updates",
+		"guildID", interaction.GuildID,
+		"channelID", interaction.ChannelID,
+		"gameID", gameID,
+		"provider", game.Provider,
+		"region", server.Region,
+		"serverKey", serverKey,
+		"serverIdentifier", fmt.Sprint(server.Identifier),
+		"technicalServerID", technicalID,
+	)
 
 	return h.discordResponse(fmt.Sprintf("Unsubscribed this channel from **%s** / **%s** updates.", gameID, serverKey))
 }
