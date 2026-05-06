@@ -215,7 +215,7 @@ func (h *Handler) handleUnsubscribe(ctx context.Context, interaction discord.Int
 		return h.discordResponse(fmt.Sprintf("No subscription found for **%s** / **%s** in this channel.", gameID, serverKey))
 	}
 
-	return h.discordResponse(fmt.Sprintf("Unsubscribed this channel from **%s** / **%s** updates.", gameID, serverKey))
+	return h.discordResponse(fmt.Sprintf("Unsubscribed this channel from **%s** / **%s** updates (removed %d subscription(s) in this channel).", gameID, serverKey, deleted))
 }
 
 func (h *Handler) handleListSubscriptions(ctx context.Context, interaction discord.Interaction) (events.LambdaFunctionURLResponse, error) {
@@ -352,13 +352,14 @@ func (h *Handler) handleHelp() (events.LambdaFunctionURLResponse, error) {
 		"",
 		"**Commands**",
 		"- `/subscribe game:<game> server:<server> [role:<role>]` — subscribe this channel to server status updates",
-		"- `/unsubscribe game:<game> server:<server>` — unsubscribe this channel",
-		"- `/subscriptions` — list all subscriptions in this server, grouped by channel",
+		"- `/unsubscribe game:<game> server:<server>` — unsubscribe this channel (removes *all* subscriptions for that server in the current channel)",
+		"- `/subscriptions` — list all subscriptions in this guild, grouped by channel",
 		"- `/games` — list supported games",
 		"- `/servers game:<game>` — list servers for a game",
 		"",
 		"**Tips**",
 		"- Game + server names are case-insensitive. Spaces/underscores are treated like hyphens (e.g. `Area 52` → `area-52`).",
+		"- Before unsubscribing, consider running `/subscriptions` to review what’s set up in each channel.",
 		"- If a server list is very large, I’ll truncate it—use a more specific server name based on the list.",
 	}, "\n")
 	return h.discordResponse(msg)
