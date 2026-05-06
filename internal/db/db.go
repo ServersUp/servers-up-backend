@@ -18,6 +18,8 @@ type Database struct {
 	tableName string
 }
 
+const guildIDIndexName = "GuildIdIndex"
+
 func NewDatabase(client *dynamodb.Client, tableName string) *Database {
 	return &Database{
 		client:    client,
@@ -79,46 +81,71 @@ func (db *Database) AddSubscription(ctx context.Context, sub models.Subscription
 	return nil
 }
 
-// DeleteSubscriptionByChannel removes a subscription from a channel.
-// Since we only have the channel ID from the interaction, we query by server ID first.
-func (db *Database) DeleteSubscriptionByChannel(ctx context.Context, serverID, channelID string) (bool, error) {
-	// Query all subscriptions for this server.
-	out, err := db.client.Query(ctx, &dynamodb.QueryInput{
-		TableName:              aws.String(db.tableName),
-		KeyConditionExpression: aws.String("serverId = :sid"),
-		ExpressionAttributeValues: map[string]types.AttributeValue{
-			":sid": &types.AttributeValueMemberS{Value: serverID},
-		},
-	})
+// ListSubscriptionsByGuild returns every Discord subscription for the given guild ID.
+// It queries the GuildIdIndex and paginates until all items are read.
+func (db *Database) ListSubscriptionsByGuild(ctx context.Context, guildID string) ([]models.Subscription, error) {
+	var out []models.Subscription
+	var startKey map[string]types.AttributeValue
 
-	if err != nil {
-		return false, fmt.Errorf("failed to query subscriptions: %w", err)
+	for {
+		qout, err := db.client.Query(ctx, &dynamodb.QueryInput{
+			TableName:              aws.String(db.tableName),
+			IndexName:              aws.String(guildIDIndexName),
+			KeyConditionExpression: aws.String("guildId = :gid"),
+			ExpressionAttributeValues: map[string]types.AttributeValue{
+				":gid": &types.AttributeValueMemberS{Value: guildID},
+			},
+			ExclusiveStartKey: startKey,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to query subscriptions by guild: %w", err)
+		}
+
+		for _, item := range qout.Items {
+			var sub models.Subscription
+			if err := attributevalue.UnmarshalMap(item, &sub); err != nil {
+				continue
+			}
+			out = append(out, sub)
+		}
+
+		if qout.LastEvaluatedKey == nil {
+			break
+		}
+		startKey = qout.LastEvaluatedKey
 	}
 
-	var found bool
-	for _, item := range out.Items {
-		var sub models.Subscription
-		if err := attributevalue.UnmarshalMap(item, &sub); err != nil {
+	return out, nil
+}
+
+// DeleteGuildChannelSubscriptionsForServer deletes all subscription items for a guild+channel
+// that match the specified serverId. It queries by GuildIdIndex, filters in-memory, and
+// deletes matching primary keys.
+func (db *Database) DeleteGuildChannelSubscriptionsForServer(ctx context.Context, guildID, channelID, serverID string) (int, error) {
+	subs, err := db.ListSubscriptionsByGuild(ctx, guildID)
+	if err != nil {
+		return 0, err
+	}
+
+	deleted := 0
+	for _, sub := range subs {
+		if sub.ChannelID != channelID || sub.ServerID != serverID {
 			continue
 		}
-
-		// Check if this subscription matches the target channel.
-		if sub.ChannelID == channelID {
-			_, err = db.client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
-				TableName: aws.String(db.tableName),
-				Key: map[string]types.AttributeValue{
-					"serverId":       &types.AttributeValueMemberS{Value: serverID},
-					"subscriptionId": &types.AttributeValueMemberS{Value: sub.SubscriptionID},
-				},
-			})
-			if err != nil {
-				return false, fmt.Errorf("failed to delete subscription: %w", err)
-			}
-			found = true
+		_, err := db.client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+			TableName: aws.String(db.tableName),
+			Key: map[string]types.AttributeValue{
+				"serverId":       &types.AttributeValueMemberS{Value: sub.ServerID},
+				"subscriptionId": &types.AttributeValueMemberS{Value: sub.SubscriptionID},
+			},
+		})
+		if err != nil {
+			return deleted, fmt.Errorf("failed to delete subscription: %w", err)
 		}
+		deleted++
 	}
 
-	return found, nil
+	return deleted, nil
 }
 
 // ListSubscriptionsByServer returns every Discord subscription for the given server ID.

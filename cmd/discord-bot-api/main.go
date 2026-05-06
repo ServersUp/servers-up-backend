@@ -30,7 +30,8 @@ import (
 // Database defines the required interface for the subscription store.
 type Database interface {
 	AddSubscription(ctx context.Context, sub models.Subscription) error
-	DeleteSubscriptionByChannel(ctx context.Context, serverID, channelID string) (bool, error)
+	DeleteGuildChannelSubscriptionsForServer(ctx context.Context, guildID, channelID, serverID string) (int, error)
+	ListSubscriptionsByGuild(ctx context.Context, guildID string) ([]models.Subscription, error)
 }
 
 // ConfigProvider defines the required interface for fetching configurations.
@@ -128,6 +129,8 @@ func (h *Handler) HandleRequest(ctx context.Context, request events.LambdaFuncti
 			return h.handleSubscribe(ctx, interaction, data)
 		case "unsubscribe":
 			return h.handleUnsubscribe(ctx, interaction, data)
+		case "subscriptions":
+			return h.handleListSubscriptions(ctx, interaction)
 		case "help":
 			return h.handleHelp()
 		case "games":
@@ -202,17 +205,96 @@ func (h *Handler) handleUnsubscribe(ctx context.Context, interaction discord.Int
 
 	technicalID := serverid.Generate(game.Provider, server.Region, server.Identifier)
 
-	found, err := h.database.DeleteSubscriptionByChannel(ctx, technicalID, interaction.ChannelID)
+	deleted, err := h.database.DeleteGuildChannelSubscriptionsForServer(ctx, interaction.GuildID, interaction.ChannelID, technicalID)
 	if err != nil {
 		slog.Error("failed to delete subscription", "error", err, "serverID", technicalID, "channelID", interaction.ChannelID)
 		return h.discordResponse("An error occurred while trying to unsubscribe.")
 	}
 
-	if !found {
+	if deleted == 0 {
 		return h.discordResponse(fmt.Sprintf("No subscription found for **%s** / **%s** in this channel.", gameID, serverKey))
 	}
 
 	return h.discordResponse(fmt.Sprintf("Unsubscribed this channel from **%s** / **%s** updates.", gameID, serverKey))
+}
+
+func (h *Handler) handleListSubscriptions(ctx context.Context, interaction discord.Interaction) (events.LambdaFunctionURLResponse, error) {
+	slog.Info("subscriptions list requested", "guildID", interaction.GuildID, "channelID", interaction.ChannelID)
+
+	mapping, err := h.loadServerMapping(ctx)
+	if err != nil {
+		slog.Error("failed to load server mapping", "error", err)
+		return h.discordResponse("System error: Unable to load server configuration right now. Please try again in a bit.")
+	}
+
+	subs, err := h.database.ListSubscriptionsByGuild(ctx, interaction.GuildID)
+	if err != nil {
+		slog.Error("failed to list subscriptions for guild", "error", err, "guildID", interaction.GuildID)
+		return h.discordResponse("Failed to list subscriptions. Please try again later.")
+	}
+	if len(subs) == 0 {
+		return h.discordResponse("No subscriptions found for this guild.")
+	}
+
+	// Group by channel, then sort for stable output.
+	byChannel := map[string][]models.Subscription{}
+	for _, sub := range subs {
+		byChannel[sub.ChannelID] = append(byChannel[sub.ChannelID], sub)
+	}
+	channelIDs := make([]string, 0, len(byChannel))
+	for ch := range byChannel {
+		channelIDs = append(channelIDs, ch)
+	}
+	sort.Strings(channelIDs)
+
+	lines := []string{"**Subscriptions for this guild**"}
+	for _, ch := range channelIDs {
+		lines = append(lines, fmt.Sprintf("**<#%s>**", ch))
+		entries := byChannel[ch]
+		sort.Slice(entries, func(i, j int) bool {
+			if entries[i].ServerID == entries[j].ServerID {
+				return entries[i].Mention < entries[j].Mention
+			}
+			return entries[i].ServerID < entries[j].ServerID
+		})
+
+		for _, sub := range entries {
+			human := h.humanServerLabel(mapping, sub.ServerID)
+			if sub.Mention != "" {
+				lines = append(lines, fmt.Sprintf("- `%s` %s", human, sub.Mention))
+			} else {
+				lines = append(lines, fmt.Sprintf("- `%s`", human))
+			}
+		}
+	}
+
+	content := strings.Join(lines, "\n")
+	if len(content) > 1900 {
+		content = content[:1900] + "\n\n(truncated)"
+	}
+	return h.discordResponse(content)
+}
+
+func (h *Handler) humanServerLabel(mapping servermap.Mapping, technicalServerID string) string {
+	parts := strings.Split(technicalServerID, "#")
+	if len(parts) != 3 {
+		return technicalServerID
+	}
+	provider := parts[0]
+	region := parts[1]
+	identifier := parts[2]
+
+	for gameID, game := range mapping.Games {
+		if game.Provider != provider {
+			continue
+		}
+		for serverKey, server := range game.Servers {
+			if server.Region == region && fmt.Sprint(server.Identifier) == identifier {
+				return fmt.Sprintf("%s-%s", gameID, serverKey)
+			}
+		}
+	}
+	return technicalServerID
 }
 
 // Helper methods for standardized responses
@@ -271,6 +353,7 @@ func (h *Handler) handleHelp() (events.LambdaFunctionURLResponse, error) {
 		"**Commands**",
 		"- `/subscribe game:<game> server:<server> [role:<role>]` — subscribe this channel to server status updates",
 		"- `/unsubscribe game:<game> server:<server>` — unsubscribe this channel",
+		"- `/subscriptions` — list all subscriptions in this server, grouped by channel",
 		"- `/games` — list supported games",
 		"- `/servers game:<game>` — list servers for a game",
 		"",
