@@ -20,7 +20,7 @@ type Database struct {
 }
 
 type dynamodbAPI interface {
-	UpdateItem(ctx context.Context, params *dynamodb.UpdateItemInput, optFns ...func(*dynamodb.Options)) (*dynamodb.UpdateItemOutput, error)
+	GetItem(ctx context.Context, params *dynamodb.GetItemInput, optFns ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error)
 	PutItem(ctx context.Context, params *dynamodb.PutItemInput, optFns ...func(*dynamodb.Options)) (*dynamodb.PutItemOutput, error)
 	Query(ctx context.Context, params *dynamodb.QueryInput, optFns ...func(*dynamodb.Options)) (*dynamodb.QueryOutput, error)
 	DeleteItem(ctx context.Context, params *dynamodb.DeleteItemInput, optFns ...func(*dynamodb.Options)) (*dynamodb.DeleteItemOutput, error)
@@ -45,37 +45,53 @@ func (db *Database) SaveServerStatus(ctx context.Context, gameID, provider, regi
 	// ServerID is constructed to be unique across all providers and regions.
 	serverID := serverid.Generate(provider, region, identifier)
 
-	// Only write when the status changes (or item doesn't exist yet).
-	// This prevents consuming WRUs on every poll when realms are stable.
-	_, err := db.client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+	// Read-before-write to avoid issuing a write request when unchanged.
+	getOut, err := db.client.GetItem(ctx, &dynamodb.GetItemInput{
 		TableName: aws.String(db.tableName),
 		Key: map[string]types.AttributeValue{
 			"gameId":   &types.AttributeValueMemberS{Value: gameID},
 			"serverId": &types.AttributeValueMemberS{Value: serverID},
 		},
-		UpdateExpression: aws.String(
-			"SET #provider = :p, #region = :r, #status = :s, #lastUpdatedAt = :now",
-		),
+		ProjectionExpression: aws.String("#status"),
 		ExpressionAttributeNames: map[string]string{
-			"#provider":      "provider",
-			"#region":        "region",
-			"#status":        "status",
-			"#lastUpdatedAt": "lastUpdatedAt",
+			"#status": "status",
 		},
-		ExpressionAttributeValues: map[string]types.AttributeValue{
-			":p":   &types.AttributeValueMemberS{Value: provider},
-			":r":   &types.AttributeValueMemberS{Value: region},
-			":s":   &types.AttributeValueMemberS{Value: status},
-			":now": &types.AttributeValueMemberN{Value: fmt.Sprint(now)},
-		},
-		ConditionExpression: aws.String("attribute_not_exists(#status) OR #status <> :s"),
+		ConsistentRead: aws.Bool(false),
 	})
 	if err != nil {
-		var cfe *types.ConditionalCheckFailedException
-		if errors.As(err, &cfe) {
+		return fmt.Errorf("dynamodb get error for %s: %w", serverID, err)
+	}
+
+	if len(getOut.Item) > 0 {
+		var current struct {
+			Status string `dynamodbav:"status"`
+		}
+		if err := attributevalue.UnmarshalMap(getOut.Item, &current); err == nil && current.Status == status {
 			return ErrStatusUnchanged
 		}
-		return fmt.Errorf("dynamodb update error for %s: %w", serverID, err)
+	}
+
+	serverStatus := models.GameServerStatus{
+		GameID:        gameID,
+		ServerID:      serverID,
+		Provider:      provider,
+		Region:        region,
+		Status:        status,
+		LastUpdatedAt: now,
+	}
+
+	item, err := attributevalue.MarshalMap(serverStatus)
+	if err != nil {
+		return fmt.Errorf("failed to marshal status for %s: %w", serverID, err)
+	}
+
+	// Only write when the status changes (or item doesn't exist yet).
+	_, err = db.client.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName: aws.String(db.tableName),
+		Item:      item,
+	})
+	if err != nil {
+		return fmt.Errorf("dynamodb put error for %s: %w", serverID, err)
 	}
 
 	return nil
