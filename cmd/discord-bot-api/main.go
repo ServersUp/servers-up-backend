@@ -11,6 +11,8 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/ServersUp/servers-up-backend/internal/config"
 	"github.com/ServersUp/servers-up-backend/internal/db"
@@ -44,11 +46,16 @@ type Handler struct {
 	database         Database
 	configProvider   ConfigProvider
 	discordPublicKey string
+
+	mappingMu       sync.RWMutex
+	mappingCached   servermap.Mapping
+	mappingCachedAt time.Time
 }
 
 const (
 	defaultConfigBucket     = "serversup-config"
 	defaultServerMappingKey = "server-mapping.json"
+	mappingCacheTTL         = 60 * time.Second
 )
 
 func NewHandler(ctx context.Context) *Handler {
@@ -140,9 +147,119 @@ func (h *Handler) HandleRequest(ctx context.Context, request events.LambdaFuncti
 		default:
 			return h.discordResponse("Unknown command. Use `/help` to see what I can do.")
 		}
+
+	case discord.InteractionTypeApplicationCommandAutocomplete:
+		var data discord.InteractionData
+		if err := json.Unmarshal(interaction.Data, &data); err != nil {
+			slog.Warn("autocomplete: failed to parse interaction data", "error", err)
+			return h.autocompleteResponse(nil)
+		}
+		return h.handleAutocomplete(ctx, data)
 	}
 
 	return h.discordResponse("Unsupported interaction type.")
+}
+
+func (h *Handler) handleAutocomplete(ctx context.Context, data discord.InteractionData) (events.LambdaFunctionURLResponse, error) {
+	switch data.Name {
+	case "subscribe", "unsubscribe":
+	default:
+		return h.autocompleteResponse(nil)
+	}
+
+	focused := findFocusedOption(data.Options)
+	if focused == nil {
+		return h.autocompleteResponse(nil)
+	}
+
+	mapping, err := h.loadServerMapping(ctx)
+	if err != nil {
+		slog.Error("autocomplete: failed to load server mapping", "error", err)
+		return h.autocompleteResponse(nil)
+	}
+
+	const maxChoices = 25
+	switch focused.Name {
+	case "game":
+		partial := optionStringValue(focused)
+		games := mapping.ListGames()
+		matches := filterSortedKeysPrefix(games, partial, maxChoices)
+		return h.autocompleteResponse(keysToAutocompleteChoices(matches))
+	case "server":
+		gameNorm := servermap.NormalizeKey(h.getOption(data.Options, "game"))
+		if gameNorm == "" {
+			return h.autocompleteResponse(nil)
+		}
+		servers, err := mapping.ListServers(gameNorm)
+		if err != nil {
+			return h.autocompleteResponse(nil)
+		}
+		partial := optionStringValue(focused)
+		matches := filterSortedKeysPrefix(servers, partial, maxChoices)
+		return h.autocompleteResponse(keysToAutocompleteChoices(matches))
+	default:
+		return h.autocompleteResponse(nil)
+	}
+}
+
+func findFocusedOption(opts []discord.InteractionOption) *discord.InteractionOption {
+	for i := range opts {
+		o := &opts[i]
+		if o.Focused {
+			return o
+		}
+		if nested := findFocusedOption(o.Options); nested != nil {
+			return nested
+		}
+	}
+	return nil
+}
+
+func optionStringValue(opt *discord.InteractionOption) string {
+	if opt == nil {
+		return ""
+	}
+	if s, ok := opt.Value.(string); ok {
+		return s
+	}
+	return ""
+}
+
+// filterSortedKeysPrefix keeps sort order of keys; matches normalized key prefix (case-insensitive via NormalizeKey).
+func filterSortedKeysPrefix(sortedKeys []string, partial string, max int) []string {
+	if max <= 0 {
+		return nil
+	}
+	q := servermap.NormalizeKey(partial)
+	out := make([]string, 0, max)
+	for _, k := range sortedKeys {
+		kn := servermap.NormalizeKey(k)
+		if q == "" || strings.HasPrefix(kn, q) {
+			out = append(out, k)
+			if len(out) >= max {
+				break
+			}
+		}
+	}
+	return out
+}
+
+func keysToAutocompleteChoices(keys []string) []discord.ApplicationCommandOptionChoice {
+	out := make([]discord.ApplicationCommandOptionChoice, len(keys))
+	for i, k := range keys {
+		out[i] = discord.ApplicationCommandOptionChoice{Name: k, Value: k}
+	}
+	return out
+}
+
+func (h *Handler) autocompleteResponse(choices []discord.ApplicationCommandOptionChoice) (events.LambdaFunctionURLResponse, error) {
+	if choices == nil {
+		choices = []discord.ApplicationCommandOptionChoice{}
+	}
+	return h.jsonResponse(http.StatusOK, discord.InteractionResponse{
+		Type: discord.InteractionResponseTypeApplicationCommandAutocompleteResult,
+		Data: &discord.InteractionResponseData{Choices: choices},
+	})
 }
 
 func (h *Handler) handleSubscribe(ctx context.Context, interaction discord.Interaction, data discord.InteractionData) (events.LambdaFunctionURLResponse, error) {
@@ -408,6 +525,27 @@ func (h *Handler) jsonResponse(statusCode int, body any) (events.LambdaFunctionU
 }
 
 func (h *Handler) loadServerMapping(ctx context.Context) (servermap.Mapping, error) {
+	h.mappingMu.RLock()
+	if !h.mappingCachedAt.IsZero() && time.Since(h.mappingCachedAt) < mappingCacheTTL {
+		m := h.mappingCached
+		h.mappingMu.RUnlock()
+		return m, nil
+	}
+	h.mappingMu.RUnlock()
+
+	mapping, err := h.loadServerMappingFromS3(ctx)
+	if err != nil {
+		return servermap.Mapping{}, err
+	}
+
+	h.mappingMu.Lock()
+	h.mappingCached = mapping
+	h.mappingCachedAt = time.Now()
+	h.mappingMu.Unlock()
+	return mapping, nil
+}
+
+func (h *Handler) loadServerMappingFromS3(ctx context.Context) (servermap.Mapping, error) {
 	var mapping servermap.Mapping
 
 	bucket := os.Getenv("CONFIG_BUCKET")
@@ -437,6 +575,7 @@ func (h *Handler) handleHelp() (events.LambdaFunctionURLResponse, error) {
 		"- `/servers game:<game>` — list servers for a game",
 		"",
 		"**Tips**",
+		"- For `/subscribe` and `/unsubscribe`, start typing in **game** or **server** to search matching options (up to 25 suggestions). Pick **role** from Discord’s role picker when needed.",
 		"- Game + server names are case-insensitive. Spaces/underscores are treated like hyphens (e.g. `Area 52` → `area-52`).",
 		"- Before unsubscribing, consider running `/subscriptions` to review what’s set up in each channel.",
 		"- If a server list is very large, I’ll truncate it—use a more specific server name based on the list.",

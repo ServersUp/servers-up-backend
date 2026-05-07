@@ -57,6 +57,12 @@ func TestHandleRequest(t *testing.T) {
 						"illidan": {Region: "us", Identifier: 57},
 					},
 				},
+				"wipe": {
+					Provider: "other",
+					Servers: map[string]servermap.Server{
+						"alpha": {Region: "us", Identifier: 1},
+					},
+				},
 			}
 			return nil
 		},
@@ -208,6 +214,96 @@ func TestHandleRequest(t *testing.T) {
 
 		if resp.StatusCode != http.StatusUnauthorized {
 			t.Errorf("expected 401, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("Autocomplete game focused (Type 4)", func(t *testing.T) {
+		body := `{"type": 4, "guild_id": "guild-1", "data": {"name": "subscribe", "options": [{"type": 3, "name": "game", "value": "w", "focused": true}, {"type": 3, "name": "server"}]}}`
+		timestamp := "12345"
+		sig := hex.EncodeToString(ed25519.Sign(priv, []byte(timestamp+body)))
+
+		resp, err := handler.HandleRequest(context.Background(), events.LambdaFunctionURLRequest{
+			Headers: map[string]string{
+				"x-signature-ed25519":   sig,
+				"x-signature-timestamp": timestamp,
+			},
+			Body: body,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", resp.StatusCode, resp.Body)
+		}
+		var discordResp discord.InteractionResponse
+		if err := json.Unmarshal([]byte(resp.Body), &discordResp); err != nil {
+			t.Fatal(err)
+		}
+		if discordResp.Type != discord.InteractionResponseTypeApplicationCommandAutocompleteResult {
+			t.Fatalf("expected autocomplete response type 8, got %d", discordResp.Type)
+		}
+		if discordResp.Data == nil || len(discordResp.Data.Choices) > 25 {
+			t.Fatalf("expected choices len <= 25, got %v", discordResp.Data)
+		}
+		if len(discordResp.Data.Choices) != 2 {
+			t.Fatalf("expected 2 game suggestions for prefix w, got %d", len(discordResp.Data.Choices))
+		}
+		if discordResp.Data.Choices[0].Value != "wipe" || discordResp.Data.Choices[1].Value != "wow" {
+			t.Fatalf("unexpected choices: %#v", discordResp.Data.Choices)
+		}
+	})
+
+	t.Run("Autocomplete server focused with game (Type 4)", func(t *testing.T) {
+		body := `{"type": 4, "guild_id": "guild-1", "data": {"name": "unsubscribe", "options": [{"type": 3, "name": "game", "value": "wow"}, {"type": 3, "name": "server", "value": "ill", "focused": true}]}}`
+		timestamp := "12345"
+		sig := hex.EncodeToString(ed25519.Sign(priv, []byte(timestamp+body)))
+
+		resp, err := handler.HandleRequest(context.Background(), events.LambdaFunctionURLRequest{
+			Headers: map[string]string{
+				"x-signature-ed25519":   sig,
+				"x-signature-timestamp": timestamp,
+			},
+			Body: body,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", resp.StatusCode, resp.Body)
+		}
+		var discordResp discord.InteractionResponse
+		if err := json.Unmarshal([]byte(resp.Body), &discordResp); err != nil {
+			t.Fatal(err)
+		}
+		if len(discordResp.Data.Choices) != 1 || discordResp.Data.Choices[0].Value != "illidan" {
+			t.Fatalf("expected illidan choice, got %#v", discordResp.Data.Choices)
+		}
+	})
+
+	t.Run("Autocomplete server focused without game (Type 4)", func(t *testing.T) {
+		body := `{"type": 4, "guild_id": "guild-1", "data": {"name": "subscribe", "options": [{"type": 3, "name": "server", "value": "ill", "focused": true}]}}`
+		timestamp := "12345"
+		sig := hex.EncodeToString(ed25519.Sign(priv, []byte(timestamp+body)))
+
+		resp, err := handler.HandleRequest(context.Background(), events.LambdaFunctionURLRequest{
+			Headers: map[string]string{
+				"x-signature-ed25519":   sig,
+				"x-signature-timestamp": timestamp,
+			},
+			Body: body,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", resp.StatusCode, resp.Body)
+		}
+		var discordResp discord.InteractionResponse
+		if err := json.Unmarshal([]byte(resp.Body), &discordResp); err != nil {
+			t.Fatal(err)
+		}
+		if len(discordResp.Data.Choices) != 0 {
+			t.Fatalf("expected empty choices without game, got %#v", discordResp.Data.Choices)
 		}
 	})
 }
