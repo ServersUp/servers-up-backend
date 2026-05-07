@@ -33,6 +33,8 @@ type Subscription struct {
 	GuildID   string `json:"guild_id" dynamodbav:"guildId"`
 	ChannelID string `json:"channel_id" dynamodbav:"channelId"`
 	Mention   string `json:"mention" dynamodbav:"mention"`
+	// RoleName is the Discord role display name (resolved at subscribe time when a bot token is configured).
+	RoleName string `json:"role_name,omitempty" dynamodbav:"roleName,omitempty"`
 }
 
 // GuildNotifyJob is the payload sent to the Discord guild notify SQS queue when

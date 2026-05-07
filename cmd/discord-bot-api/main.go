@@ -46,16 +46,24 @@ type Handler struct {
 	database         Database
 	configProvider   ConfigProvider
 	discordPublicKey string
+	httpClient       *http.Client
+	discordBotToken  string
 
 	mappingMu       sync.RWMutex
 	mappingCached   servermap.Mapping
 	mappingCachedAt time.Time
+
+	channelNamesMu    sync.RWMutex
+	channelNamesGuild string
+	channelNamesByID  map[string]string
+	channelNamesAt    time.Time
 }
 
 const (
 	defaultConfigBucket     = "serversup-config"
 	defaultServerMappingKey = "server-mapping.json"
 	mappingCacheTTL         = 60 * time.Second
+	channelNamesCacheTTL    = 2 * time.Minute
 )
 
 func NewHandler(ctx context.Context) *Handler {
@@ -78,10 +86,23 @@ func NewHandler(ctx context.Context) *Handler {
 		os.Exit(1)
 	}
 
+	httpClient := &http.Client{Timeout: 12 * time.Second}
+	var botToken string
+	if p := os.Getenv("DISCORD_BOT_TOKEN_PATH"); p != "" {
+		tok, err := provider.GetSecret(ctx, p)
+		if err != nil {
+			slog.Warn("DISCORD_BOT_TOKEN_PATH set but secret not loaded; role/channel labels may be limited", "error", err, "path", p)
+		} else {
+			botToken = tok
+		}
+	}
+
 	return &Handler{
 		database:         db.NewDatabase(dynamodb.NewFromConfig(cfg), os.Getenv("DDB_SUBSCRIPTIONS_TABLE_NAME")),
 		configProvider:   provider,
 		discordPublicKey: publicKey,
+		httpClient:       httpClient,
+		discordBotToken:  botToken,
 	}
 }
 
@@ -215,18 +236,18 @@ func (h *Handler) handleAutocomplete(ctx context.Context, interaction discord.In
 			return subs[i].Mention < subs[j].Mention
 		})
 		partial := optionStringValue(focused)
-		choices := h.subscriptionChoicesForQuery(mapping, subs, partial, maxChoices)
+		choices := h.subscriptionChoicesForQuery(ctx, interaction.GuildID, mapping, subs, partial, maxChoices)
 		return h.autocompleteResponse(choices)
 	default:
 		return h.autocompleteResponse(nil)
 	}
 }
 
-func (h *Handler) subscriptionChoicesForQuery(mapping servermap.Mapping, subs []models.Subscription, partial string, max int) []discord.ApplicationCommandOptionChoice {
+func (h *Handler) subscriptionChoicesForQuery(ctx context.Context, guildID string, mapping servermap.Mapping, subs []models.Subscription, partial string, max int) []discord.ApplicationCommandOptionChoice {
 	q := strings.ToLower(strings.TrimSpace(partial))
 	out := make([]discord.ApplicationCommandOptionChoice, 0, max)
 	for _, sub := range subs {
-		label := h.subscriptionAutocompleteLabel(mapping, sub)
+		label := h.subscriptionUnsubscribeChoiceText(ctx, guildID, mapping, sub)
 		if q != "" && !strings.Contains(strings.ToLower(label), q) {
 			continue
 		}
@@ -247,15 +268,87 @@ func (h *Handler) subscriptionChoicesForQuery(mapping servermap.Mapping, subs []
 
 func (h *Handler) subscriptionDisplayLabel(mapping servermap.Mapping, sub models.Subscription) string {
 	human := h.humanServerLabel(mapping, sub.ServerID)
+	if sub.RoleName != "" {
+		return fmt.Sprintf("%s @%s", human, sub.RoleName)
+	}
 	if sub.Mention != "" {
 		return fmt.Sprintf("%s %s", human, sub.Mention)
 	}
 	return human
 }
 
-// subscriptionAutocompleteLabel matches /subscriptions semantics plus channel so guild-wide choices stay distinct.
-func (h *Handler) subscriptionAutocompleteLabel(mapping servermap.Mapping, sub models.Subscription) string {
-	return fmt.Sprintf("<#%s> · %s", sub.ChannelID, h.subscriptionDisplayLabel(mapping, sub))
+// subscriptionUnsubscribeChoiceText is shown in autocomplete only (no subscription IDs; role as @Name when known).
+func (h *Handler) subscriptionUnsubscribeChoiceText(ctx context.Context, guildID string, mapping servermap.Mapping, sub models.Subscription) string {
+	game, server := splitGameServerHuman(h.humanServerLabel(mapping, sub.ServerID))
+	role := h.subscriptionRoleDisplay(sub)
+	ch := h.channelPretty(ctx, guildID, sub.ChannelID)
+	return fmt.Sprintf("%s · %s · %s · in %s", game, server, role, ch)
+}
+
+func splitGameServerHuman(human string) (game, server string) {
+	game, server, ok := strings.Cut(human, "-")
+	if !ok || server == "" {
+		return human, human
+	}
+	return game, server
+}
+
+func (h *Handler) subscriptionRoleDisplay(sub models.Subscription) string {
+	if sub.RoleName != "" {
+		return "@" + sub.RoleName
+	}
+	if sub.Mention != "" {
+		return "role mention"
+	}
+	return "channel-wide"
+}
+
+func (h *Handler) channelPretty(ctx context.Context, guildID, channelID string) string {
+	if m := h.guildChannelNames(ctx, guildID); m != nil {
+		if n := m[channelID]; n != "" {
+			return "#" + n
+		}
+	}
+	return fmt.Sprintf("<#%s>", channelID)
+}
+
+func (h *Handler) guildChannelNames(ctx context.Context, guildID string) map[string]string {
+	if h.discordBotToken == "" {
+		return nil
+	}
+	h.channelNamesMu.RLock()
+	if h.channelNamesGuild == guildID && h.channelNamesByID != nil &&
+		time.Since(h.channelNamesAt) < channelNamesCacheTTL {
+		m := h.channelNamesByID
+		h.channelNamesMu.RUnlock()
+		return m
+	}
+	h.channelNamesMu.RUnlock()
+
+	names, err := discord.GuildChannelNames(ctx, h.httpClient, h.discordBotToken, guildID)
+	if err != nil {
+		slog.Warn("discord: could not list guild channels", "error", err, "guildID", guildID)
+		return nil
+	}
+	h.channelNamesMu.Lock()
+	h.channelNamesGuild = guildID
+	h.channelNamesByID = names
+	h.channelNamesAt = time.Now()
+	h.channelNamesMu.Unlock()
+	return names
+}
+
+func (h *Handler) alreadySubscribedMessage(ctx context.Context, guildID, channelID, gameID, serverKey, roleName, mention string) string {
+	human := fmt.Sprintf("%s-%s", gameID, serverKey)
+	ch := h.channelPretty(ctx, guildID, channelID)
+	switch {
+	case roleName != "":
+		return fmt.Sprintf("Already subscribed — **%s** in %s with @%s.", human, ch, roleName)
+	case mention != "":
+		return fmt.Sprintf("Already subscribed — **%s** in %s with a role mention.", human, ch)
+	default:
+		return fmt.Sprintf("Already subscribed — **%s** in %s.", human, ch)
+	}
 }
 
 func findFocusedOption(opts []discord.InteractionOption) *discord.InteractionOption {
@@ -364,6 +457,30 @@ func (h *Handler) handleSubscribe(ctx context.Context, interaction discord.Inter
 		mention = fmt.Sprintf("<@&%s>", roleID)
 	}
 
+	roleName := ""
+	if roleID != "" && h.discordBotToken != "" {
+		if n, err := discord.GuildRoleName(ctx, h.httpClient, h.discordBotToken, interaction.GuildID, roleID); err != nil {
+			slog.Warn("could not resolve Discord role name", "error", err, "roleID", roleID)
+		} else {
+			roleName = n
+		}
+	}
+
+	existing, err := h.database.ListSubscriptionsByGuild(ctx, interaction.GuildID)
+	if err != nil {
+		slog.Error("failed to list subscriptions for duplicate check", "error", err, "guildID", interaction.GuildID)
+		return h.discordResponse("Failed to verify subscription. Please try again later.")
+	}
+	for _, e := range existing {
+		if e.ChannelID == interaction.ChannelID && e.ServerID == technicalID && e.Mention == mention {
+			displayRole := roleName
+			if displayRole == "" {
+				displayRole = e.RoleName
+			}
+			return h.discordResponse(h.alreadySubscribedMessage(ctx, interaction.GuildID, interaction.ChannelID, gameID, serverKey, displayRole, mention))
+		}
+	}
+
 	slog.Info("subscribe request resolved",
 		"guildID", interaction.GuildID,
 		"channelID", interaction.ChannelID,
@@ -382,6 +499,7 @@ func (h *Handler) handleSubscribe(ctx context.Context, interaction discord.Inter
 		GuildID:        interaction.GuildID,
 		ChannelID:      interaction.ChannelID,
 		Mention:        mention,
+		RoleName:       roleName,
 	}
 
 	if err := h.database.AddSubscription(ctx, sub); err != nil {
@@ -406,11 +524,15 @@ func (h *Handler) handleSubscribe(ctx context.Context, interaction discord.Inter
 		"technicalServerID", technicalID,
 	)
 
-	channelMention := fmt.Sprintf("<#%s>", interaction.ChannelID)
-	if mention != "" {
-		return h.discordResponse(fmt.Sprintf("Subscribed %s to **%s** / **%s** updates in %s.", mention, gameID, serverKey, channelMention))
+	chLabel := h.channelPretty(ctx, interaction.GuildID, interaction.ChannelID)
+	humanKey := fmt.Sprintf("%s-%s", gameID, serverKey)
+	if roleName != "" {
+		return h.discordResponse(fmt.Sprintf("Subscribed @%s to **%s** server status updates in %s.", roleName, humanKey, chLabel))
 	}
-	return h.discordResponse(fmt.Sprintf("Subscribed this channel to **%s** / **%s** updates.", gameID, serverKey))
+	if mention != "" {
+		return h.discordResponse(fmt.Sprintf("Subscribed with a role mention to **%s** server status updates in %s.", humanKey, chLabel))
+	}
+	return h.discordResponse(fmt.Sprintf("Subscribed this channel to **%s** server status updates in %s.", humanKey, chLabel))
 }
 
 func (h *Handler) handleUnsubscribe(ctx context.Context, interaction discord.Interaction, data discord.InteractionData) (events.LambdaFunctionURLResponse, error) {
@@ -461,11 +583,14 @@ func (h *Handler) handleUnsubscribe(ctx context.Context, interaction discord.Int
 	}
 
 	human := h.humanServerLabel(mapping, match.ServerID)
-	chMention := fmt.Sprintf("<#%s>", match.ChannelID)
-	if match.Mention != "" {
-		return h.discordResponse(fmt.Sprintf("Removed **%s** %s from %s.", human, match.Mention, chMention))
+	chLabel := h.channelPretty(ctx, interaction.GuildID, match.ChannelID)
+	if match.RoleName != "" {
+		return h.discordResponse(fmt.Sprintf("Unsubscribed @%s from **%s** server status updates in %s.", match.RoleName, human, chLabel))
 	}
-	return h.discordResponse(fmt.Sprintf("Removed **%s** from %s.", human, chMention))
+	if match.Mention != "" {
+		return h.discordResponse(fmt.Sprintf("Unsubscribed from **%s** server status updates in %s (role mention).", human, chLabel))
+	}
+	return h.discordResponse(fmt.Sprintf("Unsubscribed from **%s** server status updates in %s.", human, chLabel))
 }
 
 func (h *Handler) handleListSubscriptions(ctx context.Context, interaction discord.Interaction) (events.LambdaFunctionURLResponse, error) {
@@ -623,7 +748,7 @@ func (h *Handler) handleHelp() (events.LambdaFunctionURLResponse, error) {
 		"",
 		"**Commands**",
 		"- `/subscribe game:<game> server:<server> [role:<role>]` — subscribe this channel to server status updates (type to search **game** and **server**; pick **role** from Discord’s role picker)",
-		"- `/unsubscribe subscription:<subscription>` — remove one subscription anywhere in **this guild** (choices list every subscription like `/subscriptions`, with channel; type to search)",
+		"- `/unsubscribe subscription:<subscription>` — remove one subscription anywhere in **this guild** (autocomplete shows game, server, role, and channel name; type to search)",
 		"- `/subscriptions` — list all subscriptions in this guild, grouped by channel",
 		"- `/help` — show this message",
 		"",

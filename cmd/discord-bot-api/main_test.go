@@ -100,6 +100,9 @@ func TestHandleRequest(t *testing.T) {
 		timestamp := "12345"
 		sig := hex.EncodeToString(ed25519.Sign(priv, []byte(timestamp+body)))
 
+		mockDB.ListFunc = func(ctx context.Context, guildID string) ([]models.Subscription, error) {
+			return nil, nil
+		}
 		mockDB.AddFunc = func(ctx context.Context, sub models.Subscription) error {
 			if sub.ServerID != "battlenet#us#57" {
 				return fmt.Errorf("unexpected server ID: %s", sub.ServerID)
@@ -129,6 +132,51 @@ func TestHandleRequest(t *testing.T) {
 		}
 	})
 
+	t.Run("Subscribe duplicate blocked (Type 2)", func(t *testing.T) {
+		body := `{"type": 2, "guild_id": "guild-1", "channel_id": "chan-1", "data": {"name": "subscribe", "options": [{"name": "game", "value": "wow"}, {"name": "server", "value": "illidan"}, {"name": "role", "value": "123"}]}}`
+		timestamp := "12345"
+		sig := hex.EncodeToString(ed25519.Sign(priv, []byte(timestamp+body)))
+
+		var addCalls int
+		mockDB.ListFunc = func(ctx context.Context, guildID string) ([]models.Subscription, error) {
+			return []models.Subscription{
+				{
+					ServerID:  "battlenet#us#57",
+					GuildID:   "guild-1",
+					ChannelID: "chan-1",
+					Mention:   "<@&123>",
+					RoleName:  "Raid",
+				},
+			}, nil
+		}
+		mockDB.AddFunc = func(ctx context.Context, sub models.Subscription) error {
+			addCalls++
+			return nil
+		}
+
+		resp, _ := handler.HandleRequest(context.Background(), events.LambdaFunctionURLRequest{
+			Headers: map[string]string{
+				"x-signature-ed25519":   sig,
+				"x-signature-timestamp": timestamp,
+			},
+			Body: body,
+		})
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200, got %d", resp.StatusCode)
+		}
+		if addCalls != 0 {
+			t.Fatalf("expected AddSubscription not called, got %d calls", addCalls)
+		}
+		var discordResp discord.InteractionResponse
+		json.Unmarshal([]byte(resp.Body), &discordResp)
+		if !strings.Contains(discordResp.Data.Content, "Already subscribed") {
+			t.Fatalf("expected already subscribed message, got %q", discordResp.Data.Content)
+		}
+		if !strings.Contains(discordResp.Data.Content, "wow-illidan") || !strings.Contains(discordResp.Data.Content, "@Raid") {
+			t.Fatalf("expected human-readable game-server and role, got %q", discordResp.Data.Content)
+		}
+	})
+
 	t.Run("Unsubscribe removes selected subscription (Type 2)", func(t *testing.T) {
 		body := `{"type": 2, "guild_id": "guild-1", "channel_id": "chan-1", "data": {"name": "unsubscribe", "options": [{"name": "subscription", "value": "sub-illidan-1"}]}}`
 		timestamp := "12345"
@@ -139,7 +187,7 @@ func TestHandleRequest(t *testing.T) {
 				return nil, fmt.Errorf("unexpected guildID: %s", guildID)
 			}
 			return []models.Subscription{
-				{ServerID: "battlenet#us#57", GuildID: "guild-1", ChannelID: "chan-1", SubscriptionID: "sub-illidan-1", Mention: ""},
+				{ServerID: "battlenet#us#57", GuildID: "guild-1", ChannelID: "chan-1", SubscriptionID: "sub-illidan-1", Mention: "", RoleName: ""},
 			}, nil
 		}
 
@@ -168,6 +216,11 @@ func TestHandleRequest(t *testing.T) {
 		}
 		if calls != 1 {
 			t.Fatalf("expected DeleteSubscription called once, got %d", calls)
+		}
+		var discordResp discord.InteractionResponse
+		json.Unmarshal([]byte(resp.Body), &discordResp)
+		if !strings.Contains(discordResp.Data.Content, "Unsubscribed") || !strings.Contains(discordResp.Data.Content, "wow-illidan") {
+			t.Fatalf("expected unsubscribe wording, got %q", discordResp.Data.Content)
 		}
 	})
 
@@ -266,7 +319,7 @@ func TestHandleRequest(t *testing.T) {
 
 		mockDB.ListFunc = func(ctx context.Context, guildID string) ([]models.Subscription, error) {
 			return []models.Subscription{
-				{ServerID: "battlenet#us#57", GuildID: "guild-1", ChannelID: "chan-1", SubscriptionID: "sub-1", Mention: "<@&99>"},
+				{ServerID: "battlenet#us#57", GuildID: "guild-1", ChannelID: "chan-1", SubscriptionID: "sub-1", Mention: "<@&99>", RoleName: "Booty Bay"},
 				{ServerID: "other#us#1", GuildID: "guild-1", ChannelID: "chan-2", SubscriptionID: "sub-2", Mention: ""},
 			}, nil
 		}
@@ -291,8 +344,12 @@ func TestHandleRequest(t *testing.T) {
 		if len(discordResp.Data.Choices) != 1 || discordResp.Data.Choices[0].Value != "sub-1" {
 			t.Fatalf("expected one channel-matched subscription choice, got %#v", discordResp.Data.Choices)
 		}
-		if !strings.Contains(discordResp.Data.Choices[0].Name, "illidan") || !strings.Contains(discordResp.Data.Choices[0].Name, "chan-1") {
-			t.Fatalf("expected label with channel and server, got %q", discordResp.Data.Choices[0].Name)
+		name := discordResp.Data.Choices[0].Name
+		if !strings.Contains(name, "wow") || !strings.Contains(name, "illidan") || !strings.Contains(name, "@Booty Bay") {
+			t.Fatalf("expected human game, server, and @role in choice name, got %q", name)
+		}
+		if strings.Contains(name, "sub-1") || strings.Contains(name, "<@&") || strings.Contains(name, "99") {
+			t.Fatalf("choice name should not expose subscription id or raw role snowflake, got %q", name)
 		}
 	})
 
