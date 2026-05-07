@@ -183,6 +183,30 @@ func (db *Database) DeleteGuildChannelSubscriptionsForServer(ctx context.Context
 	return deleted, nil
 }
 
+// DeleteSubscription removes a single subscription row if it belongs to the given guild and channel.
+func (db *Database) DeleteSubscription(ctx context.Context, guildID, channelID, serverID, subscriptionID string) error {
+	_, err := db.client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+		TableName: aws.String(db.tableName),
+		Key: map[string]types.AttributeValue{
+			"serverId":       &types.AttributeValueMemberS{Value: serverID},
+			"subscriptionId": &types.AttributeValueMemberS{Value: subscriptionID},
+		},
+		ConditionExpression: aws.String("guildId = :g AND channelId = :c"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":g": &types.AttributeValueMemberS{Value: guildID},
+			":c": &types.AttributeValueMemberS{Value: channelID},
+		},
+	})
+	if err != nil {
+		var cfe *types.ConditionalCheckFailedException
+		if errors.As(err, &cfe) {
+			return fmt.Errorf("subscription not found in this channel: %w", err)
+		}
+		return fmt.Errorf("failed to delete subscription: %w", err)
+	}
+	return nil
+}
+
 // ListSubscriptionsByServer returns every Discord subscription for the given server ID.
 // It paginates until all items are read.
 func (db *Database) ListSubscriptionsByServer(ctx context.Context, serverID string) ([]models.Subscription, error) {

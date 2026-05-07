@@ -19,15 +19,15 @@ import (
 // MockDatabase implements the Database interface for testing.
 type MockDatabase struct {
 	AddFunc    func(ctx context.Context, sub models.Subscription) error
-	DeleteFunc func(ctx context.Context, guildID, channelID, serverID string) (int, error)
+	DeleteFunc func(ctx context.Context, guildID, channelID, serverID, subscriptionID string) error
 	ListFunc   func(ctx context.Context, guildID string) ([]models.Subscription, error)
 }
 
 func (m *MockDatabase) AddSubscription(ctx context.Context, sub models.Subscription) error {
 	return m.AddFunc(ctx, sub)
 }
-func (m *MockDatabase) DeleteGuildChannelSubscriptionsForServer(ctx context.Context, guildID, channelID, serverID string) (int, error) {
-	return m.DeleteFunc(ctx, guildID, channelID, serverID)
+func (m *MockDatabase) DeleteSubscription(ctx context.Context, guildID, channelID, serverID, subscriptionID string) error {
+	return m.DeleteFunc(ctx, guildID, channelID, serverID, subscriptionID)
 }
 func (m *MockDatabase) ListSubscriptionsByGuild(ctx context.Context, guildID string) ([]models.Subscription, error) {
 	return m.ListFunc(ctx, guildID)
@@ -129,24 +129,30 @@ func TestHandleRequest(t *testing.T) {
 		}
 	})
 
-	t.Run("Unsubscribe removes all channel subscriptions (Type 2)", func(t *testing.T) {
-		body := `{"type": 2, "guild_id": "guild-1", "channel_id": "chan-1", "data": {"name": "unsubscribe", "options": [{"name": "game", "value": "wow"}, {"name": "server", "value": "illidan"}]}}`
+	t.Run("Unsubscribe removes selected subscription (Type 2)", func(t *testing.T) {
+		body := `{"type": 2, "guild_id": "guild-1", "channel_id": "chan-1", "data": {"name": "unsubscribe", "options": [{"name": "subscription", "value": "sub-illidan-1"}]}}`
 		timestamp := "12345"
 		sig := hex.EncodeToString(ed25519.Sign(priv, []byte(timestamp+body)))
 
-		var calls int
-		mockDB.DeleteFunc = func(ctx context.Context, guildID, channelID, serverID string) (int, error) {
-			calls++
-			if serverID != "battlenet#us#57" {
-				return 0, fmt.Errorf("unexpected serverID: %s", serverID)
-			}
-			if channelID != "chan-1" {
-				return 0, fmt.Errorf("unexpected channelID: %s", channelID)
-			}
+		mockDB.ListFunc = func(ctx context.Context, guildID string) ([]models.Subscription, error) {
 			if guildID != "guild-1" {
-				return 0, fmt.Errorf("unexpected guildID: %s", guildID)
+				return nil, fmt.Errorf("unexpected guildID: %s", guildID)
 			}
-			return 2, nil
+			return []models.Subscription{
+				{ServerID: "battlenet#us#57", GuildID: "guild-1", ChannelID: "chan-1", SubscriptionID: "sub-illidan-1", Mention: ""},
+			}, nil
+		}
+
+		var calls int
+		mockDB.DeleteFunc = func(ctx context.Context, guildID, channelID, serverID, subscriptionID string) error {
+			calls++
+			if serverID != "battlenet#us#57" || subscriptionID != "sub-illidan-1" {
+				return fmt.Errorf("unexpected keys: %s %s", serverID, subscriptionID)
+			}
+			if channelID != "chan-1" || guildID != "guild-1" {
+				return fmt.Errorf("unexpected guild/channel: %s %s", guildID, channelID)
+			}
+			return nil
 		}
 
 		resp, _ := handler.HandleRequest(context.Background(), events.LambdaFunctionURLRequest{
@@ -161,7 +167,7 @@ func TestHandleRequest(t *testing.T) {
 			t.Errorf("expected 200, got %d", resp.StatusCode)
 		}
 		if calls != 1 {
-			t.Fatalf("expected DeleteGuildChannelSubscriptionsForServer called once, got %d", calls)
+			t.Fatalf("expected DeleteSubscription called once, got %d", calls)
 		}
 	})
 
@@ -253,10 +259,17 @@ func TestHandleRequest(t *testing.T) {
 		}
 	})
 
-	t.Run("Autocomplete server focused with game (Type 4)", func(t *testing.T) {
-		body := `{"type": 4, "guild_id": "guild-1", "data": {"name": "unsubscribe", "options": [{"type": 3, "name": "game", "value": "wow"}, {"type": 3, "name": "server", "value": "ill", "focused": true}]}}`
+	t.Run("Autocomplete subscription for unsubscribe (Type 4)", func(t *testing.T) {
+		body := `{"type": 4, "guild_id": "guild-1", "channel_id": "chan-1", "data": {"name": "unsubscribe", "options": [{"type": 3, "name": "subscription", "value": "ill", "focused": true}]}}`
 		timestamp := "12345"
 		sig := hex.EncodeToString(ed25519.Sign(priv, []byte(timestamp+body)))
+
+		mockDB.ListFunc = func(ctx context.Context, guildID string) ([]models.Subscription, error) {
+			return []models.Subscription{
+				{ServerID: "battlenet#us#57", GuildID: "guild-1", ChannelID: "chan-1", SubscriptionID: "sub-1", Mention: "<@&99>"},
+				{ServerID: "other#us#1", GuildID: "guild-1", ChannelID: "chan-2", SubscriptionID: "sub-2", Mention: ""},
+			}, nil
+		}
 
 		resp, err := handler.HandleRequest(context.Background(), events.LambdaFunctionURLRequest{
 			Headers: map[string]string{
@@ -275,8 +288,11 @@ func TestHandleRequest(t *testing.T) {
 		if err := json.Unmarshal([]byte(resp.Body), &discordResp); err != nil {
 			t.Fatal(err)
 		}
-		if len(discordResp.Data.Choices) != 1 || discordResp.Data.Choices[0].Value != "illidan" {
-			t.Fatalf("expected illidan choice, got %#v", discordResp.Data.Choices)
+		if len(discordResp.Data.Choices) != 1 || discordResp.Data.Choices[0].Value != "sub-1" {
+			t.Fatalf("expected one channel-matched subscription choice, got %#v", discordResp.Data.Choices)
+		}
+		if !strings.Contains(discordResp.Data.Choices[0].Name, "illidan") {
+			t.Fatalf("expected label to mention server, got %q", discordResp.Data.Choices[0].Name)
 		}
 	})
 

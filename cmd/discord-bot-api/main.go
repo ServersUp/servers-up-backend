@@ -32,7 +32,7 @@ import (
 // Database defines the required interface for the subscription store.
 type Database interface {
 	AddSubscription(ctx context.Context, sub models.Subscription) error
-	DeleteGuildChannelSubscriptionsForServer(ctx context.Context, guildID, channelID, serverID string) (int, error)
+	DeleteSubscription(ctx context.Context, guildID, channelID, serverID, subscriptionID string) error
 	ListSubscriptionsByGuild(ctx context.Context, guildID string) ([]models.Subscription, error)
 }
 
@@ -140,10 +140,6 @@ func (h *Handler) HandleRequest(ctx context.Context, request events.LambdaFuncti
 			return h.handleListSubscriptions(ctx, interaction)
 		case "help":
 			return h.handleHelp()
-		case "games":
-			return h.handleListGames(ctx)
-		case "servers":
-			return h.handleListServers(ctx, data)
 		default:
 			return h.discordResponse("Unknown command. Use `/help` to see what I can do.")
 		}
@@ -154,52 +150,115 @@ func (h *Handler) HandleRequest(ctx context.Context, request events.LambdaFuncti
 			slog.Warn("autocomplete: failed to parse interaction data", "error", err)
 			return h.autocompleteResponse(nil)
 		}
-		return h.handleAutocomplete(ctx, data)
+		return h.handleAutocomplete(ctx, interaction, data)
 	}
 
 	return h.discordResponse("Unsupported interaction type.")
 }
 
-func (h *Handler) handleAutocomplete(ctx context.Context, data discord.InteractionData) (events.LambdaFunctionURLResponse, error) {
-	switch data.Name {
-	case "subscribe", "unsubscribe":
-	default:
-		return h.autocompleteResponse(nil)
-	}
-
+func (h *Handler) handleAutocomplete(ctx context.Context, interaction discord.Interaction, data discord.InteractionData) (events.LambdaFunctionURLResponse, error) {
 	focused := findFocusedOption(data.Options)
 	if focused == nil {
 		return h.autocompleteResponse(nil)
 	}
 
-	mapping, err := h.loadServerMapping(ctx)
-	if err != nil {
-		slog.Error("autocomplete: failed to load server mapping", "error", err)
-		return h.autocompleteResponse(nil)
-	}
-
 	const maxChoices = 25
-	switch focused.Name {
-	case "game":
-		partial := optionStringValue(focused)
-		games := mapping.ListGames()
-		matches := filterSortedKeysPrefix(games, partial, maxChoices)
-		return h.autocompleteResponse(keysToAutocompleteChoices(matches))
-	case "server":
-		gameNorm := servermap.NormalizeKey(h.getOption(data.Options, "game"))
-		if gameNorm == "" {
-			return h.autocompleteResponse(nil)
-		}
-		servers, err := mapping.ListServers(gameNorm)
+	switch data.Name {
+	case "subscribe":
+		mapping, err := h.loadServerMapping(ctx)
 		if err != nil {
+			slog.Error("autocomplete: failed to load server mapping", "error", err)
 			return h.autocompleteResponse(nil)
 		}
+		switch focused.Name {
+		case "game":
+			partial := optionStringValue(focused)
+			games := mapping.ListGames()
+			matches := filterSortedKeysPrefix(games, partial, maxChoices)
+			return h.autocompleteResponse(keysToAutocompleteChoices(matches))
+		case "server":
+			gameNorm := servermap.NormalizeKey(h.getOption(data.Options, "game"))
+			if gameNorm == "" {
+				return h.autocompleteResponse(nil)
+			}
+			servers, err := mapping.ListServers(gameNorm)
+			if err != nil {
+				return h.autocompleteResponse(nil)
+			}
+			partial := optionStringValue(focused)
+			matches := filterSortedKeysPrefix(servers, partial, maxChoices)
+			return h.autocompleteResponse(keysToAutocompleteChoices(matches))
+		default:
+			return h.autocompleteResponse(nil)
+		}
+	case "unsubscribe":
+		if focused.Name != "subscription" {
+			return h.autocompleteResponse(nil)
+		}
+		mapping, err := h.loadServerMapping(ctx)
+		if err != nil {
+			slog.Error("autocomplete: failed to load server mapping", "error", err)
+			return h.autocompleteResponse(nil)
+		}
+		subs, err := h.database.ListSubscriptionsByGuild(ctx, interaction.GuildID)
+		if err != nil {
+			slog.Error("autocomplete: failed to list subscriptions", "error", err)
+			return h.autocompleteResponse(nil)
+		}
+		channelSubs := filterSubscriptionsForChannel(subs, interaction.ChannelID)
+		sort.Slice(channelSubs, func(i, j int) bool {
+			if channelSubs[i].ServerID == channelSubs[j].ServerID {
+				return channelSubs[i].Mention < channelSubs[j].Mention
+			}
+			return channelSubs[i].ServerID < channelSubs[j].ServerID
+		})
 		partial := optionStringValue(focused)
-		matches := filterSortedKeysPrefix(servers, partial, maxChoices)
-		return h.autocompleteResponse(keysToAutocompleteChoices(matches))
+		choices := h.subscriptionChoicesForQuery(mapping, channelSubs, partial, maxChoices)
+		return h.autocompleteResponse(choices)
 	default:
 		return h.autocompleteResponse(nil)
 	}
+}
+
+func filterSubscriptionsForChannel(subs []models.Subscription, channelID string) []models.Subscription {
+	out := make([]models.Subscription, 0)
+	for _, s := range subs {
+		if s.ChannelID == channelID {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func (h *Handler) subscriptionChoicesForQuery(mapping servermap.Mapping, subs []models.Subscription, partial string, max int) []discord.ApplicationCommandOptionChoice {
+	q := strings.ToLower(strings.TrimSpace(partial))
+	out := make([]discord.ApplicationCommandOptionChoice, 0, max)
+	for _, sub := range subs {
+		label := h.subscriptionDisplayLabel(mapping, sub)
+		if q != "" && !strings.Contains(strings.ToLower(label), q) {
+			continue
+		}
+		name := label
+		if len(name) > 100 {
+			name = name[:97] + "..."
+		}
+		out = append(out, discord.ApplicationCommandOptionChoice{
+			Name:  name,
+			Value: sub.SubscriptionID,
+		})
+		if len(out) >= max {
+			break
+		}
+	}
+	return out
+}
+
+func (h *Handler) subscriptionDisplayLabel(mapping servermap.Mapping, sub models.Subscription) string {
+	human := h.humanServerLabel(mapping, sub.ServerID)
+	if sub.Mention != "" {
+		return fmt.Sprintf("%s %s", human, sub.Mention)
+	}
+	return human
 }
 
 func findFocusedOption(opts []discord.InteractionOption) *discord.InteractionOption {
@@ -298,7 +357,7 @@ func (h *Handler) handleSubscribe(ctx context.Context, interaction discord.Inter
 			"gameName", gameName,
 			"serverName", serverName,
 		)
-		return h.discordResponse(h.formatLookupError("subscribe", mapping, lookupErr, gameName, serverName))
+		return h.discordResponse(h.formatLookupError(mapping, lookupErr, gameName, serverName))
 	}
 
 	technicalID := serverid.Generate(game.Provider, server.Region, server.Identifier)
@@ -358,19 +417,34 @@ func (h *Handler) handleSubscribe(ctx context.Context, interaction discord.Inter
 }
 
 func (h *Handler) handleUnsubscribe(ctx context.Context, interaction discord.Interaction, data discord.InteractionData) (events.LambdaFunctionURLResponse, error) {
-	rawGame := h.getOption(data.Options, "game")
-	rawServer := h.getOption(data.Options, "server")
-	gameName := servermap.NormalizeKey(rawGame)
-	serverName := servermap.NormalizeKey(rawServer)
-
+	subscriptionID := strings.TrimSpace(h.getOption(data.Options, "subscription"))
 	slog.Info("unsubscribe request received",
 		"guildID", interaction.GuildID,
 		"channelID", interaction.ChannelID,
-		"rawGame", rawGame,
-		"rawServer", rawServer,
-		"gameName", gameName,
-		"serverName", serverName,
+		"subscriptionID", subscriptionID,
 	)
+
+	if subscriptionID == "" {
+		return h.discordResponse("Choose a **subscription** (type to search), matching what `/subscriptions` shows for this channel.")
+	}
+
+	subs, err := h.database.ListSubscriptionsByGuild(ctx, interaction.GuildID)
+	if err != nil {
+		slog.Error("failed to list subscriptions for unsubscribe", "error", err, "guildID", interaction.GuildID)
+		return h.discordResponse("Failed to load subscriptions. Please try again later.")
+	}
+
+	var match *models.Subscription
+	for i := range subs {
+		s := &subs[i]
+		if s.ChannelID == interaction.ChannelID && s.SubscriptionID == subscriptionID {
+			match = s
+			break
+		}
+	}
+	if match == nil {
+		return h.discordResponse("That subscription is not in this channel or no longer exists. Run `/subscriptions` and try again.")
+	}
 
 	mapping, err := h.loadServerMapping(ctx)
 	if err != nil {
@@ -378,40 +452,22 @@ func (h *Handler) handleUnsubscribe(ctx context.Context, interaction discord.Int
 		return h.discordResponse("System error: Unable to load server configuration right now. Please try again in a bit.")
 	}
 
-	gameID, game, serverKey, server, lookupErr := mapping.Lookup(gameName, serverName)
-	if lookupErr != nil {
-		slog.Warn("unsubscribe request lookup failed",
-			"error", lookupErr,
-			"guildID", interaction.GuildID,
-			"channelID", interaction.ChannelID,
-			"rawGame", rawGame,
-			"rawServer", rawServer,
-			"gameName", gameName,
-			"serverName", serverName,
-		)
-		return h.discordResponse(h.formatLookupError("unsubscribe", mapping, lookupErr, gameName, serverName))
-	}
-
-	technicalID := serverid.Generate(game.Provider, server.Region, server.Identifier)
-
-	deleted, err := h.database.DeleteGuildChannelSubscriptionsForServer(ctx, interaction.GuildID, interaction.ChannelID, technicalID)
-	if err != nil {
+	if err := h.database.DeleteSubscription(ctx, interaction.GuildID, interaction.ChannelID, match.ServerID, match.SubscriptionID); err != nil {
 		slog.Error("failed to delete subscription",
 			"error", err,
 			"guildID", interaction.GuildID,
 			"channelID", interaction.ChannelID,
-			"gameID", gameID,
-			"serverKey", serverKey,
-			"technicalServerID", technicalID,
+			"serverID", match.ServerID,
+			"subscriptionID", match.SubscriptionID,
 		)
 		return h.discordResponse("An error occurred while trying to unsubscribe.")
 	}
 
-	if deleted == 0 {
-		return h.discordResponse(fmt.Sprintf("No subscription found for **%s** / **%s** in this channel.", gameID, serverKey))
+	human := h.humanServerLabel(mapping, match.ServerID)
+	if match.Mention != "" {
+		return h.discordResponse(fmt.Sprintf("Removed **%s** %s from this channel.", human, match.Mention))
 	}
-
-	return h.discordResponse(fmt.Sprintf("Unsubscribed this channel from **%s** / **%s** updates (removed %d subscription(s) in this channel).", gameID, serverKey, deleted))
+	return h.discordResponse(fmt.Sprintf("Removed **%s** from this channel.", human))
 }
 
 func (h *Handler) handleListSubscriptions(ctx context.Context, interaction discord.Interaction) (events.LambdaFunctionURLResponse, error) {
@@ -568,101 +624,27 @@ func (h *Handler) handleHelp() (events.LambdaFunctionURLResponse, error) {
 		"**ServersUp Discord Bot — Help**",
 		"",
 		"**Commands**",
-		"- `/subscribe game:<game> server:<server> [role:<role>]` — subscribe this channel to server status updates",
-		"- `/unsubscribe game:<game> server:<server>` — unsubscribe this channel (removes *all* subscriptions for that server in the current channel)",
+		"- `/subscribe game:<game> server:<server> [role:<role>]` — subscribe this channel to server status updates (type to search **game** and **server**; pick **role** from Discord’s role picker)",
+		"- `/unsubscribe subscription:<subscription>` — remove one subscription from **this channel** (choices match `/subscriptions`: game–server label and optional role mention; type to search)",
 		"- `/subscriptions` — list all subscriptions in this guild, grouped by channel",
-		"- `/games` — list supported games",
-		"- `/servers game:<game>` — list servers for a game",
+		"- `/help` — show this message",
 		"",
 		"**Tips**",
-		"- For `/subscribe` and `/unsubscribe`, start typing in **game** or **server** to search matching options (up to 25 suggestions). Pick **role** from Discord’s role picker when needed.",
 		"- Game + server names are case-insensitive. Spaces/underscores are treated like hyphens (e.g. `Area 52` → `area-52`).",
-		"- Before unsubscribing, consider running `/subscriptions` to review what’s set up in each channel.",
-		"- If a server list is very large, I’ll truncate it—use a more specific server name based on the list.",
+		"- Run `/subscriptions` to see what’s configured; use the same labels when picking **subscription** on `/unsubscribe`.",
 	}, "\n")
 	return h.discordResponse(msg)
 }
 
-func (h *Handler) handleListGames(ctx context.Context) (events.LambdaFunctionURLResponse, error) {
-	mapping, err := h.loadServerMapping(ctx)
-	if err != nil {
-		slog.Error("failed to load server mapping", "error", err)
-		return h.discordResponse("System error: Unable to load server configuration right now. Please try again in a bit.")
-	}
-
-	games := mapping.ListGames()
-	if len(games) == 0 {
-		return h.discordResponse("No games are currently configured.")
-	}
-
-	sort.Strings(games)
-	lines := make([]string, 0, len(games))
-	for _, g := range games {
-		lines = append(lines, fmt.Sprintf("- `%s`", g))
-	}
-
-	content := "**Supported games**\n" + strings.Join(lines, "\n")
-	return h.discordResponse(content)
-}
-
-func (h *Handler) handleListServers(ctx context.Context, data discord.InteractionData) (events.LambdaFunctionURLResponse, error) {
-	gameName := servermap.NormalizeKey(h.getOption(data.Options, "game"))
-	if gameName == "" {
-		return h.discordResponse("Missing `game`. Try `/servers game:wow` or run `/games` to see supported games.")
-	}
-
-	mapping, err := h.loadServerMapping(ctx)
-	if err != nil {
-		slog.Error("failed to load server mapping", "error", err)
-		return h.discordResponse("System error: Unable to load server configuration right now. Please try again in a bit.")
-	}
-
-	servers, err := mapping.ListServers(gameName)
-	if err != nil {
-		if errors.Is(err, servermap.ErrUnknownGame) {
-			return h.discordResponse(fmt.Sprintf("Unknown game `%s`. Use `/games` to see supported games.", gameName))
-		}
-		return h.discordResponse("Unable to list servers right now.")
-	}
-	if len(servers) == 0 {
-		return h.discordResponse(fmt.Sprintf("No servers configured for `%s`.", gameName))
-	}
-
-	// Discord hard-limits message length (2000 chars). We try progressively more compact renderings,
-	// and if it still won't fit we log the full list and return instructions.
-	const maxChars = 1900
-
-	// 1) Most compact: comma-separated (no bullet markup).
-	joinedComma := strings.Join(servers, ", ")
-	content := fmt.Sprintf("**Servers for `%s`** (%d total)\n%s", gameName, len(servers), joinedComma)
-	if len(content) <= maxChars {
-		return h.discordResponse(content)
-	}
-
-	// 2) Next: newline-separated in a code block (still readable, often smaller than backticked bullets).
-	joinedNewline := strings.Join(servers, "\n")
-	content = fmt.Sprintf("**Servers for `%s`** (%d total)\n```%s```", gameName, len(servers), joinedNewline)
-	if len(content) <= maxChars {
-		return h.discordResponse(content)
-	}
-
-	// 3) Still too large for Discord message limits.
-	return h.discordResponse(fmt.Sprintf(
-		"Sorry — there are too many servers to display for `%s` (%d total).",
-		gameName,
-		len(servers),
-	))
-}
-
-func (h *Handler) formatLookupError(action string, mapping servermap.Mapping, err error, rawGame, rawServer string) string {
+func (h *Handler) formatLookupError(mapping servermap.Mapping, err error, rawGame, rawServer string) string {
 	switch {
 	case errors.Is(err, servermap.ErrMissingGame):
-		return fmt.Sprintf("Missing `game`. Try `/%s game:wow server:illidan` or run `/games`.", action)
+		return "Missing `game`. Start typing in **game** to search, or use `/help`."
 	case errors.Is(err, servermap.ErrMissingServer):
 		if rawGame == "" {
-			return fmt.Sprintf("Missing `server`. Try `/%s game:wow server:illidan`.", action)
+			return "Missing `server`. Choose **game** first, then type to search **server**."
 		}
-		return fmt.Sprintf("Missing `server`. Run `/servers game:%s` to see valid server names.", servermap.NormalizeKey(rawGame))
+		return fmt.Sprintf("Missing `server`. Type to search **server** for game `%s`.", servermap.NormalizeKey(rawGame))
 	case errors.Is(err, servermap.ErrUnknownGame):
 		games := mapping.ListGames()
 		if len(games) == 0 {
@@ -671,9 +653,9 @@ func (h *Handler) formatLookupError(action string, mapping servermap.Mapping, er
 		if len(games) > 10 {
 			games = games[:10]
 		}
-		return fmt.Sprintf("Unknown game `%s`. Try `/games` (examples: %s).", servermap.NormalizeKey(rawGame), strings.Join(wrapBackticks(games), ", "))
+		return fmt.Sprintf("Unknown game `%s`. Examples you can try: %s.", servermap.NormalizeKey(rawGame), strings.Join(wrapBackticks(games), ", "))
 	case errors.Is(err, servermap.ErrUnknownServer):
-		return fmt.Sprintf("Unknown server `%s` for game `%s`. Run `/servers game:%s` to see valid server names.", servermap.NormalizeKey(rawServer), servermap.NormalizeKey(rawGame), servermap.NormalizeKey(rawGame))
+		return fmt.Sprintf("Unknown server `%s` for game `%s`. Type to search **server** for that game.", servermap.NormalizeKey(rawServer), servermap.NormalizeKey(rawGame))
 	default:
 		return "Invalid request. Use `/help` for usage."
 	}
