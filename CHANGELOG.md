@@ -17,13 +17,8 @@ This changelog is intended to be readable for end users and can be published dir
   - Autocomplete options display game/server/role/channel in a readable form.
 - **Duplicate subscription protection**:
   - Prevents creating the same channel+server+role subscription twice and returns an “Already subscribed” message with details.
-- **Role name resolution (best-effort)**:
-  - When configured with a Discord bot token, role display names are resolved and stored for more readable output.
 
 ### Changed
 - **Discord commands**:
   - `/games` and `/servers` are no longer exposed; discovery happens through `/subscribe` autocomplete and `/subscriptions`.
-
-### Notes
-- Backend services are deployed as AWS Lambda functions and use DynamoDB and S3 for storage/configuration. Configuration and infrastructure are managed in a separate Terraform repo.
 
