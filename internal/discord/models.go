@@ -55,7 +55,14 @@ type InteractionOption struct {
 	Type    int                 `json:"type"`
 	Name    string              `json:"name"`
 	Value   any                 `json:"value"`
+	Focused bool                `json:"focused,omitempty"`
 	Options []InteractionOption `json:"options"`
+}
+
+// ApplicationCommandOptionChoice is a single autocomplete suggestion (Discord API).
+type ApplicationCommandOptionChoice struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
 }
 
 // InteractionResponse represents the response sent back to Discord.
@@ -66,7 +73,9 @@ type InteractionResponse struct {
 
 // InteractionResponseData represents the content of a Discord response.
 type InteractionResponseData struct {
-	Content string `json:"content"`
+	Content string `json:"content,omitempty"`
 	// Flags can be used to control response visibility (e.g., 64 for ephemeral).
 	Flags int `json:"flags,omitempty"`
+	// Choices is used for InteractionResponseTypeApplicationCommandAutocompleteResult (type 8).
+	Choices []ApplicationCommandOptionChoice `json:"choices,omitempty"`
 }
