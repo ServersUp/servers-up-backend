@@ -1,0 +1,79 @@
+{
+  "start": "-PT24H",
+  "periodOverride": "inherit",
+  "widgets": [
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 0,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "title": "Status Changes (by game)",
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "${AWS_REGION}",
+        "stat": "Sum",
+        "period": 300,
+        "metrics": [
+          ["ServersUp/Backend", "StatusChange", "gameId", "wow"]
+        ]
+      }
+    },
+    {
+      "type": "metric",
+      "x": 12,
+      "y": 0,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "title": "Subscriptions Added/Removed (by game)",
+        "view": "timeSeries",
+        "region": "${AWS_REGION}",
+        "stat": "Sum",
+        "period": 300,
+        "metrics": [
+          ["ServersUp/Backend", "SubscriptionAdded", "gameId", "wow"],
+          ["ServersUp/Backend", "SubscriptionRemoved", "gameId", "wow"]
+        ]
+      }
+    },
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 6,
+      "width": 12,
+      "height": 4,
+      "properties": {
+        "title": "Totals (windowed)",
+        "view": "singleValue",
+        "region": "${AWS_REGION}",
+        "stat": "Sum",
+        "period": 86400,
+        "metrics": [
+          ["ServersUp/Backend", "SubscriptionAdded"],
+          [".", "SubscriptionRemoved"],
+          [".", "StatusChange"]
+        ]
+      }
+    },
+    {
+      "type": "metric",
+      "x": 12,
+      "y": 6,
+      "width": 12,
+      "height": 4,
+      "properties": {
+        "title": "Servers Polled (by game)",
+        "view": "timeSeries",
+        "region": "${AWS_REGION}",
+        "stat": "Sum",
+        "period": 300,
+        "metrics": [
+          ["ServersUp/Backend", "ServersPolled", "gameId", "wow"]
+        ]
+      }
+    }
+  ]
+}
+
