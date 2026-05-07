@@ -260,7 +260,7 @@ func TestHandleRequest(t *testing.T) {
 	})
 
 	t.Run("Autocomplete subscription for unsubscribe (Type 4)", func(t *testing.T) {
-		body := `{"type": 4, "guild_id": "guild-1", "channel_id": "chan-1", "data": {"name": "unsubscribe", "options": [{"type": 3, "name": "subscription", "value": "ill", "focused": true}]}}`
+		body := `{"type": 4, "guild_id": "guild-1", "channel_id": "chan-999", "data": {"name": "unsubscribe", "options": [{"type": 3, "name": "subscription", "value": "ill", "focused": true}]}}`
 		timestamp := "12345"
 		sig := hex.EncodeToString(ed25519.Sign(priv, []byte(timestamp+body)))
 
@@ -291,8 +291,8 @@ func TestHandleRequest(t *testing.T) {
 		if len(discordResp.Data.Choices) != 1 || discordResp.Data.Choices[0].Value != "sub-1" {
 			t.Fatalf("expected one channel-matched subscription choice, got %#v", discordResp.Data.Choices)
 		}
-		if !strings.Contains(discordResp.Data.Choices[0].Name, "illidan") {
-			t.Fatalf("expected label to mention server, got %q", discordResp.Data.Choices[0].Name)
+		if !strings.Contains(discordResp.Data.Choices[0].Name, "illidan") || !strings.Contains(discordResp.Data.Choices[0].Name, "chan-1") {
+			t.Fatalf("expected label with channel and server, got %q", discordResp.Data.Choices[0].Name)
 		}
 	})
 

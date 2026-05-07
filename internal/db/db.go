@@ -153,36 +153,6 @@ func (db *Database) ListSubscriptionsByGuild(ctx context.Context, guildID string
 	return out, nil
 }
 
-// DeleteGuildChannelSubscriptionsForServer deletes all subscription items for a guild+channel
-// that match the specified serverId. It queries by GuildIdIndex, filters in-memory, and
-// deletes matching primary keys.
-func (db *Database) DeleteGuildChannelSubscriptionsForServer(ctx context.Context, guildID, channelID, serverID string) (int, error) {
-	subs, err := db.ListSubscriptionsByGuild(ctx, guildID)
-	if err != nil {
-		return 0, err
-	}
-
-	deleted := 0
-	for _, sub := range subs {
-		if sub.ChannelID != channelID || sub.ServerID != serverID {
-			continue
-		}
-		_, err := db.client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
-			TableName: aws.String(db.tableName),
-			Key: map[string]types.AttributeValue{
-				"serverId":       &types.AttributeValueMemberS{Value: sub.ServerID},
-				"subscriptionId": &types.AttributeValueMemberS{Value: sub.SubscriptionID},
-			},
-		})
-		if err != nil {
-			return deleted, fmt.Errorf("failed to delete subscription: %w", err)
-		}
-		deleted++
-	}
-
-	return deleted, nil
-}
-
 // DeleteSubscription removes a single subscription row if it belongs to the given guild and channel.
 func (db *Database) DeleteSubscription(ctx context.Context, guildID, channelID, serverID, subscriptionID string) error {
 	_, err := db.client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
@@ -200,7 +170,7 @@ func (db *Database) DeleteSubscription(ctx context.Context, guildID, channelID, 
 	if err != nil {
 		var cfe *types.ConditionalCheckFailedException
 		if errors.As(err, &cfe) {
-			return fmt.Errorf("subscription not found in this channel: %w", err)
+			return fmt.Errorf("subscription not found for this guild/channel: %w", err)
 		}
 		return fmt.Errorf("failed to delete subscription: %w", err)
 	}

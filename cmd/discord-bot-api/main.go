@@ -205,36 +205,28 @@ func (h *Handler) handleAutocomplete(ctx context.Context, interaction discord.In
 			slog.Error("autocomplete: failed to list subscriptions", "error", err)
 			return h.autocompleteResponse(nil)
 		}
-		channelSubs := filterSubscriptionsForChannel(subs, interaction.ChannelID)
-		sort.Slice(channelSubs, func(i, j int) bool {
-			if channelSubs[i].ServerID == channelSubs[j].ServerID {
-				return channelSubs[i].Mention < channelSubs[j].Mention
+		sort.Slice(subs, func(i, j int) bool {
+			if subs[i].ChannelID != subs[j].ChannelID {
+				return subs[i].ChannelID < subs[j].ChannelID
 			}
-			return channelSubs[i].ServerID < channelSubs[j].ServerID
+			if subs[i].ServerID != subs[j].ServerID {
+				return subs[i].ServerID < subs[j].ServerID
+			}
+			return subs[i].Mention < subs[j].Mention
 		})
 		partial := optionStringValue(focused)
-		choices := h.subscriptionChoicesForQuery(mapping, channelSubs, partial, maxChoices)
+		choices := h.subscriptionChoicesForQuery(mapping, subs, partial, maxChoices)
 		return h.autocompleteResponse(choices)
 	default:
 		return h.autocompleteResponse(nil)
 	}
 }
 
-func filterSubscriptionsForChannel(subs []models.Subscription, channelID string) []models.Subscription {
-	out := make([]models.Subscription, 0)
-	for _, s := range subs {
-		if s.ChannelID == channelID {
-			out = append(out, s)
-		}
-	}
-	return out
-}
-
 func (h *Handler) subscriptionChoicesForQuery(mapping servermap.Mapping, subs []models.Subscription, partial string, max int) []discord.ApplicationCommandOptionChoice {
 	q := strings.ToLower(strings.TrimSpace(partial))
 	out := make([]discord.ApplicationCommandOptionChoice, 0, max)
 	for _, sub := range subs {
-		label := h.subscriptionDisplayLabel(mapping, sub)
+		label := h.subscriptionAutocompleteLabel(mapping, sub)
 		if q != "" && !strings.Contains(strings.ToLower(label), q) {
 			continue
 		}
@@ -259,6 +251,11 @@ func (h *Handler) subscriptionDisplayLabel(mapping servermap.Mapping, sub models
 		return fmt.Sprintf("%s %s", human, sub.Mention)
 	}
 	return human
+}
+
+// subscriptionAutocompleteLabel matches /subscriptions semantics plus channel so guild-wide choices stay distinct.
+func (h *Handler) subscriptionAutocompleteLabel(mapping servermap.Mapping, sub models.Subscription) string {
+	return fmt.Sprintf("<#%s> · %s", sub.ChannelID, h.subscriptionDisplayLabel(mapping, sub))
 }
 
 func findFocusedOption(opts []discord.InteractionOption) *discord.InteractionOption {
@@ -425,7 +422,7 @@ func (h *Handler) handleUnsubscribe(ctx context.Context, interaction discord.Int
 	)
 
 	if subscriptionID == "" {
-		return h.discordResponse("Choose a **subscription** (type to search), matching what `/subscriptions` shows for this channel.")
+		return h.discordResponse("Choose a **subscription** (type to search), matching what `/subscriptions` shows for this guild.")
 	}
 
 	subs, err := h.database.ListSubscriptionsByGuild(ctx, interaction.GuildID)
@@ -437,13 +434,13 @@ func (h *Handler) handleUnsubscribe(ctx context.Context, interaction discord.Int
 	var match *models.Subscription
 	for i := range subs {
 		s := &subs[i]
-		if s.ChannelID == interaction.ChannelID && s.SubscriptionID == subscriptionID {
+		if s.SubscriptionID == subscriptionID {
 			match = s
 			break
 		}
 	}
 	if match == nil {
-		return h.discordResponse("That subscription is not in this channel or no longer exists. Run `/subscriptions` and try again.")
+		return h.discordResponse("That subscription was not found in this guild. Run `/subscriptions` and try again.")
 	}
 
 	mapping, err := h.loadServerMapping(ctx)
@@ -452,11 +449,11 @@ func (h *Handler) handleUnsubscribe(ctx context.Context, interaction discord.Int
 		return h.discordResponse("System error: Unable to load server configuration right now. Please try again in a bit.")
 	}
 
-	if err := h.database.DeleteSubscription(ctx, interaction.GuildID, interaction.ChannelID, match.ServerID, match.SubscriptionID); err != nil {
+	if err := h.database.DeleteSubscription(ctx, interaction.GuildID, match.ChannelID, match.ServerID, match.SubscriptionID); err != nil {
 		slog.Error("failed to delete subscription",
 			"error", err,
 			"guildID", interaction.GuildID,
-			"channelID", interaction.ChannelID,
+			"channelID", match.ChannelID,
 			"serverID", match.ServerID,
 			"subscriptionID", match.SubscriptionID,
 		)
@@ -464,10 +461,11 @@ func (h *Handler) handleUnsubscribe(ctx context.Context, interaction discord.Int
 	}
 
 	human := h.humanServerLabel(mapping, match.ServerID)
+	chMention := fmt.Sprintf("<#%s>", match.ChannelID)
 	if match.Mention != "" {
-		return h.discordResponse(fmt.Sprintf("Removed **%s** %s from this channel.", human, match.Mention))
+		return h.discordResponse(fmt.Sprintf("Removed **%s** %s from %s.", human, match.Mention, chMention))
 	}
-	return h.discordResponse(fmt.Sprintf("Removed **%s** from this channel.", human))
+	return h.discordResponse(fmt.Sprintf("Removed **%s** from %s.", human, chMention))
 }
 
 func (h *Handler) handleListSubscriptions(ctx context.Context, interaction discord.Interaction) (events.LambdaFunctionURLResponse, error) {
@@ -625,13 +623,13 @@ func (h *Handler) handleHelp() (events.LambdaFunctionURLResponse, error) {
 		"",
 		"**Commands**",
 		"- `/subscribe game:<game> server:<server> [role:<role>]` — subscribe this channel to server status updates (type to search **game** and **server**; pick **role** from Discord’s role picker)",
-		"- `/unsubscribe subscription:<subscription>` — remove one subscription from **this channel** (choices match `/subscriptions`: game–server label and optional role mention; type to search)",
+		"- `/unsubscribe subscription:<subscription>` — remove one subscription anywhere in **this guild** (choices list every subscription like `/subscriptions`, with channel; type to search)",
 		"- `/subscriptions` — list all subscriptions in this guild, grouped by channel",
 		"- `/help` — show this message",
 		"",
 		"**Tips**",
 		"- Game + server names are case-insensitive. Spaces/underscores are treated like hyphens (e.g. `Area 52` → `area-52`).",
-		"- Run `/subscriptions` to see what’s configured; use the same labels when picking **subscription** on `/unsubscribe`.",
+		"- Run `/subscriptions` to see what’s configured; `/unsubscribe` uses the same entries (including which channel each row is in).",
 	}, "\n")
 	return h.discordResponse(msg)
 }
