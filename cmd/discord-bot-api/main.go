@@ -796,6 +796,8 @@ func (h *Handler) handleHelp() (events.LambdaFunctionURLResponse, error) {
 	msg := strings.Join([]string{
 		"**ServersUp Discord Bot — Help**",
 		"",
+		"Full info: https://serversup.github.io",
+		"",
 		"**Commands**",
 		"- `/subscribe game:<game> server:<server> [role:<role>]` — subscribe this channel to server status updates (type to search **game** and **server**; pick **role** from Discord’s role picker)",
 		"- `/unsubscribe subscription:<subscription>` — remove one subscription anywhere in **this guild** (autocomplete shows game, server, role, and channel name; type to search)",
