@@ -544,6 +544,10 @@ func (h *Handler) handleUnsubscribe(ctx context.Context, interaction discord.Int
 	)
 
 	if subscriptionID == "" {
+		slog.Warn("unsubscribe request missing subscription",
+			"guildID", interaction.GuildID,
+			"channelID", interaction.ChannelID,
+		)
 		return h.discordResponse("Choose a **subscription** (type to search), matching what `/subscriptions` shows for this guild.")
 	}
 
@@ -562,6 +566,10 @@ func (h *Handler) handleUnsubscribe(ctx context.Context, interaction discord.Int
 		}
 	}
 	if match == nil {
+		slog.Warn("unsubscribe subscription id not found in guild",
+			"guildID", interaction.GuildID,
+			"subscriptionID", subscriptionID,
+		)
 		return h.discordResponse("That subscription was not found in this guild. Run `/subscriptions` and try again.")
 	}
 
@@ -570,6 +578,18 @@ func (h *Handler) handleUnsubscribe(ctx context.Context, interaction discord.Int
 		slog.Error("failed to load server mapping", "error", err)
 		return h.discordResponse("System error: Unable to load server configuration right now. Please try again in a bit.")
 	}
+
+	human := h.humanServerLabel(mapping, match.ServerID)
+	slog.Info("unsubscribe request resolved",
+		"guildID", interaction.GuildID,
+		"requestedChannelID", interaction.ChannelID,
+		"subscriptionChannelID", match.ChannelID,
+		"serverID", match.ServerID,
+		"humanServer", human,
+		"mention", match.Mention,
+		"roleName", match.RoleName,
+		"subscriptionID", match.SubscriptionID,
+	)
 
 	if err := h.database.DeleteSubscription(ctx, interaction.GuildID, match.ChannelID, match.ServerID, match.SubscriptionID); err != nil {
 		slog.Error("failed to delete subscription",
@@ -582,14 +602,32 @@ func (h *Handler) handleUnsubscribe(ctx context.Context, interaction discord.Int
 		return h.discordResponse("An error occurred while trying to unsubscribe.")
 	}
 
-	human := h.humanServerLabel(mapping, match.ServerID)
 	chLabel := h.channelPretty(ctx, interaction.GuildID, match.ChannelID)
 	if match.RoleName != "" {
+		slog.Info("unsubscribe completed",
+			"guildID", interaction.GuildID,
+			"channelID", match.ChannelID,
+			"serverID", match.ServerID,
+			"humanServer", human,
+			"roleName", match.RoleName,
+		)
 		return h.discordResponse(fmt.Sprintf("Unsubscribed @%s from **%s** server status updates in %s.", match.RoleName, human, chLabel))
 	}
 	if match.Mention != "" {
+		slog.Info("unsubscribe completed (role mention)",
+			"guildID", interaction.GuildID,
+			"channelID", match.ChannelID,
+			"serverID", match.ServerID,
+			"humanServer", human,
+		)
 		return h.discordResponse(fmt.Sprintf("Unsubscribed from **%s** server status updates in %s (role mention).", human, chLabel))
 	}
+	slog.Info("unsubscribe completed (channel-wide)",
+		"guildID", interaction.GuildID,
+		"channelID", match.ChannelID,
+		"serverID", match.ServerID,
+		"humanServer", human,
+	)
 	return h.discordResponse(fmt.Sprintf("Unsubscribed from **%s** server status updates in %s.", human, chLabel))
 }
 
@@ -608,8 +646,10 @@ func (h *Handler) handleListSubscriptions(ctx context.Context, interaction disco
 		return h.discordResponse("Failed to list subscriptions. Please try again later.")
 	}
 	if len(subs) == 0 {
+		slog.Info("subscriptions list resolved (empty)", "guildID", interaction.GuildID)
 		return h.discordResponse("No subscriptions found for this guild.")
 	}
+	slog.Info("subscriptions list resolved", "guildID", interaction.GuildID, "count", len(subs))
 
 	// Group by channel, then sort for stable output.
 	byChannel := map[string][]models.Subscription{}
@@ -645,8 +685,17 @@ func (h *Handler) handleListSubscriptions(ctx context.Context, interaction disco
 
 	content := strings.Join(lines, "\n")
 	if len(content) > 1900 {
+		slog.Warn("subscriptions list truncated for discord limit",
+			"guildID", interaction.GuildID,
+			"length", len(content),
+		)
 		content = content[:1900] + "\n\n(truncated)"
 	}
+	slog.Info("subscriptions list response built",
+		"guildID", interaction.GuildID,
+		"channels", len(channelIDs),
+		"length", len(content),
+	)
 	return h.discordResponse(content)
 }
 
@@ -743,6 +792,7 @@ func (h *Handler) loadServerMappingFromS3(ctx context.Context) (servermap.Mappin
 }
 
 func (h *Handler) handleHelp() (events.LambdaFunctionURLResponse, error) {
+	slog.Info("help requested")
 	msg := strings.Join([]string{
 		"**ServersUp Discord Bot — Help**",
 		"",
