@@ -32,6 +32,8 @@ go.work.sum
 # .vscode/
 .DS_Store
 
-# Local agent context (Cursor map + rules; not shared via git)
-AGENTS.md
+# Local Cursor agent rules (not shared via git)
 .cursor/
+
+# Local agent context (not shared via git)
+AGENTS.md
