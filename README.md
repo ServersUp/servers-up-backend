@@ -19,6 +19,9 @@ graph TD
     BotApi[DiscordBotApiLambda]
     Poller[BNetPollingLambda]
     Scheduler[EventBridgeSchedule]
+    JobCreator[DiscordGuildNotifyJobCreatorLambda]
+    JobsQueue[SqsJobsQueue]
+    Notifier[DiscordGuildNotifyLambda]
     SubsDdb[SubscriptionsDynamoDB]
     StatusDdb[StatusDynamoDB]
     ConfigS3[ConfigS3]
@@ -33,9 +36,12 @@ graph TD
   Poller -->|BattleNetAPI| BattleNet[BattleNetAPI]
   Poller --> StatusDdb
   Poller --> ConfigS3
-```
 
-For website-ready architecture diagrams with official AWS service icons, see `https://aws.amazon.com/architecture/icons/`.
+  StatusDdb -->|StreamEvent| JobCreator
+  JobCreator --> JobsQueue
+  JobsQueue --> Notifier
+  Notifier -->|DiscordAPI| DiscordAPI
+```
 
 ## Technology Stack
 
@@ -44,6 +50,27 @@ For website-ready architecture diagrams with official AWS service icons, see `ht
 *   **Storage**: DynamoDB (Status & Subscription storage), S3 (Dynamic configuration)
 *   **Security**: AWS OIDC (Deployment), AWS SSM Parameter Store (Secrets), Ed25519 (Discord Signature Verification)
 *   **CI/CD**: GitHub Actions (Dynamic Matrix Deployment)
+
+## Design choices (cost and efficiency)
+
+### Why Go
+
+- **Low operational overhead**: fast cold starts and low memory footprint are a strong fit for Lambda workloads.
+- **Concurrency**: polling many servers benefits from cheap parallelism; Go’s goroutines make it straightforward to keep total wall-clock time low without a complex runtime.
+- **Simple deployment**: static binaries (`bootstrap` for `provided.al2023`) reduce dependency and packaging complexity.
+
+### Why serverless
+
+- **Sporadic / bursty workloads**: polling and notifications happen on a schedule or in reaction to status changes; Lambda scales with demand and stays idle when nothing happens.
+- **Cost**: paying per-invocation fits the project’s usage pattern better than always-on services.
+
+### Why SQS between “job creator” and “notifier”
+
+Guild notifications can concentrate heavily on a small number of popular servers. The DynamoDB stream → **job creator** → **SQS** → **notifier** design helps:
+
+- **Avoid hot-spotting**: decouples bursty stream events from Discord outbound sends.
+- **Smooth spikes**: the queue buffers surges so the notifier can process at a steady rate.
+- **Scale out safely**: SQS-triggered concurrency lets the notifier fan out work without a single server update causing a huge synchronous blast.
 
 ## Directory Structure
 
