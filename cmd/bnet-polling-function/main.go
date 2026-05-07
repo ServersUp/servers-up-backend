@@ -10,7 +10,6 @@ import (
 	"github.com/ServersUp/servers-up-backend/internal/bnet"
 	"github.com/ServersUp/servers-up-backend/internal/config"
 	"github.com/ServersUp/servers-up-backend/internal/db"
-	"github.com/ServersUp/servers-up-backend/internal/metrics"
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -57,8 +56,6 @@ func (h *Handler) HandleRequest(ctx context.Context, event events.CloudWatchEven
 	if err != nil {
 		return "", err
 	}
-
-	metrics.EmitCount("ServersUp/Backend", "ServersPolled", map[string]string{"gameId": "wow"}, int64(len(bnetConfig.Realms)))
 
 	// Initialize the Battle.net client and authenticate.
 	bnetClient := bnet.NewClient(clientID, clientSecret)
@@ -125,11 +122,6 @@ func (h *Handler) HandleRequest(ctx context.Context, event events.CloudWatchEven
 		"down", atomic.LoadInt32(&downCount),
 		"errors", atomic.LoadInt32(&errorCount),
 	)
-
-	metrics.EmitCount("ServersUp/Backend", "PollSuccess", map[string]string{"gameId": "wow"}, int64(atomic.LoadInt32(&successCount)))
-	metrics.EmitCount("ServersUp/Backend", "PollError", map[string]string{"gameId": "wow"}, int64(atomic.LoadInt32(&errorCount)))
-	metrics.EmitCount("ServersUp/Backend", "PollUp", map[string]string{"gameId": "wow"}, int64(atomic.LoadInt32(&upCount)))
-	metrics.EmitCount("ServersUp/Backend", "PollDown", map[string]string{"gameId": "wow"}, int64(atomic.LoadInt32(&downCount)))
 
 	return "Polling completed successfully", nil
 }
