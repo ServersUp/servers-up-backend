@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/ServersUp/servers-up-backend/internal/metrics"
 	"github.com/ServersUp/servers-up-backend/internal/models"
 	"github.com/ServersUp/servers-up-backend/internal/serverid"
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -93,6 +94,10 @@ func (db *Database) SaveServerStatus(ctx context.Context, gameID, provider, regi
 	if err != nil {
 		return fmt.Errorf("dynamodb put error for %s: %w", serverID, err)
 	}
+
+	metrics.EmitCount("ServersUp/Backend", "StatusChange", map[string]string{
+		"gameId": gameID,
+	}, 1)
 
 	return nil
 }

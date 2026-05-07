@@ -17,6 +17,7 @@ import (
 	"github.com/ServersUp/servers-up-backend/internal/config"
 	"github.com/ServersUp/servers-up-backend/internal/db"
 	"github.com/ServersUp/servers-up-backend/internal/discord"
+	"github.com/ServersUp/servers-up-backend/internal/metrics"
 	"github.com/ServersUp/servers-up-backend/internal/models"
 	"github.com/ServersUp/servers-up-backend/internal/serverid"
 	"github.com/ServersUp/servers-up-backend/internal/servermap"
@@ -524,6 +525,8 @@ func (h *Handler) handleSubscribe(ctx context.Context, interaction discord.Inter
 		"technicalServerID", technicalID,
 	)
 
+	metrics.EmitCount("ServersUp/Backend", "SubscriptionAdded", map[string]string{"gameId": gameID}, 1)
+
 	chLabel := h.channelPretty(ctx, interaction.GuildID, interaction.ChannelID)
 	humanKey := fmt.Sprintf("%s-%s", gameID, serverKey)
 	if roleName != "" {
@@ -601,6 +604,9 @@ func (h *Handler) handleUnsubscribe(ctx context.Context, interaction discord.Int
 		)
 		return h.discordResponse("An error occurred while trying to unsubscribe.")
 	}
+
+	gameID, _ := splitGameServerHuman(human)
+	metrics.EmitCount("ServersUp/Backend", "SubscriptionRemoved", map[string]string{"gameId": gameID}, 1)
 
 	chLabel := h.channelPretty(ctx, interaction.GuildID, match.ChannelID)
 	if match.RoleName != "" {
