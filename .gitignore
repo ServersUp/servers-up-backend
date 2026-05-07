@@ -34,3 +34,6 @@ go.work.sum
 
 # Local Cursor agent rules (not shared via git)
 .cursor/
+
+# Local agent context (not shared via git)
+AGENTS.md
