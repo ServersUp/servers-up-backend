@@ -4,6 +4,11 @@ All notable user-facing changes to ServersUp Backend will be documented in this 
 
 This changelog is intended to be readable for end users and can be published directly to the project website.
 
+## Unreleased
+
+### Added
+- **`/games`** — list supported games from the configured server mapping (same source as `/subscribe` autocomplete).
+
 ## v1.0.0 — 2026-05-07
 
 ### Added

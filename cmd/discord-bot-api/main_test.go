@@ -224,6 +224,38 @@ func TestHandleRequest(t *testing.T) {
 		}
 	})
 
+	t.Run("Games list (Type 2)", func(t *testing.T) {
+		body := `{"type": 2, "guild_id": "guild-1", "channel_id": "chan-1", "data": {"name": "games"}}`
+		timestamp := "12345"
+		sig := hex.EncodeToString(ed25519.Sign(priv, []byte(timestamp+body)))
+
+		resp, _ := handler.HandleRequest(context.Background(), events.LambdaFunctionURLRequest{
+			Headers: map[string]string{
+				"x-signature-ed25519":   sig,
+				"x-signature-timestamp": timestamp,
+			},
+			Body: body,
+		})
+
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("expected 200, got %d", resp.StatusCode)
+		}
+		var discordResp discord.InteractionResponse
+		json.Unmarshal([]byte(resp.Body), &discordResp)
+		c := discordResp.Data.Content
+		if !strings.Contains(c, "**Supported games**") {
+			t.Fatalf("expected supported games header, got %q", c)
+		}
+		if !strings.Contains(c, "`wipe`") || !strings.Contains(c, "`wow`") {
+			t.Fatalf("expected both games from mapping, got %q", c)
+		}
+		wipeIdx := strings.Index(c, "`wipe`")
+		wowIdx := strings.Index(c, "`wow`")
+		if wipeIdx == -1 || wowIdx == -1 || wipeIdx >= wowIdx {
+			t.Fatalf("expected alphabetical wipe then wow, got %q", c)
+		}
+	})
+
 	t.Run("Subscriptions list (Type 2)", func(t *testing.T) {
 		body := `{"type": 2, "guild_id": "guild-1", "channel_id": "chan-9", "data": {"name": "subscriptions"}}`
 		timestamp := "12345"
