@@ -98,7 +98,7 @@ An event-driven Lambda that periodically fetches the status of configured WoW re
 
 ### 2. Discord Bot API
 A Lambda Function URL-backed API that processes Discord Interactions.
-*   **Slash commands**: `/subscribe`, `/unsubscribe`, `/subscriptions`, `/help`.
+*   **Slash commands**: `/subscribe`, `/unsubscribe`, `/subscriptions`, `/games`, `/help`.
 *   **Dynamic Mapping**: Uses an S3-stored JSON file to translate human names (e.g., "Illidan") to technical IDs.
 *   **Security**: Implements mandatory Ed25519 signature verification to ensure requests originate from Discord.
 

@@ -159,6 +159,8 @@ func (h *Handler) HandleRequest(ctx context.Context, request events.LambdaFuncti
 			return h.handleUnsubscribe(ctx, interaction, data)
 		case "subscriptions":
 			return h.handleListSubscriptions(ctx, interaction)
+		case "games":
+			return h.handleGames(ctx)
 		case "help":
 			return h.handleHelp()
 		default:
@@ -699,6 +701,27 @@ func (h *Handler) handleListSubscriptions(ctx context.Context, interaction disco
 	return h.discordResponse(content)
 }
 
+func (h *Handler) handleGames(ctx context.Context) (events.LambdaFunctionURLResponse, error) {
+	slog.Info("games list requested")
+	mapping, err := h.loadServerMapping(ctx)
+	if err != nil {
+		slog.Error("failed to load server mapping", "error", err)
+		return h.discordResponse("System error: Unable to load server configuration right now. Please try again in a bit.")
+	}
+	games := mapping.ListGames()
+	if len(games) == 0 {
+		return h.discordResponse("No games are configured yet.")
+	}
+	var b strings.Builder
+	b.WriteString("**Supported games**\n")
+	for _, g := range games {
+		b.WriteString("- `")
+		b.WriteString(g)
+		b.WriteString("`\n")
+	}
+	return h.discordResponse(strings.TrimRight(b.String(), "\n"))
+}
+
 func (h *Handler) humanServerLabel(mapping servermap.Mapping, technicalServerID string) string {
 	parts := strings.Split(technicalServerID, "#")
 	if len(parts) != 3 {
@@ -802,6 +825,7 @@ func (h *Handler) handleHelp() (events.LambdaFunctionURLResponse, error) {
 		"- `/subscribe game:<game> server:<server> [role:<role>]` — subscribe this channel to server status updates (type to search **game** and **server**; pick **role** from Discord’s role picker)",
 		"- `/unsubscribe subscription:<subscription>` — remove one subscription anywhere in **this guild** (autocomplete shows game, server, role, and channel name; type to search)",
 		"- `/subscriptions` — list all subscriptions in this guild, grouped by channel",
+		"- `/games` — list supported games from configuration",
 		"- `/help` — show this message",
 		"",
 		"**Tips**",
