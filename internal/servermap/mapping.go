@@ -2,7 +2,9 @@ package servermap
 
 import (
 	"errors"
+	"fmt"
 	"sort"
+	"strings"
 )
 
 // Mapping mirrors the JSON shape of server-mapping.json stored in S3.
@@ -80,4 +82,28 @@ func (m Mapping) Lookup(gameInput, serverInput string) (gameID string, game Game
 	}
 
 	return gameID, g, serverName, s, nil
+}
+
+// HumanLabel maps a technical server ID (provider#region#identifier) to a display label (game-server).
+// Returns technicalServerID unchanged when the ID is malformed or not found in the mapping.
+func (m Mapping) HumanLabel(technicalServerID string) string {
+	parts := strings.Split(technicalServerID, "#")
+	if len(parts) != 3 {
+		return technicalServerID
+	}
+	provider := parts[0]
+	region := parts[1]
+	identifier := parts[2]
+
+	for gameID, game := range m.Games {
+		if game.Provider != provider {
+			continue
+		}
+		for serverKey, server := range game.Servers {
+			if server.Region == region && fmt.Sprint(server.Identifier) == identifier {
+				return fmt.Sprintf("%s-%s", gameID, serverKey)
+			}
+		}
+	}
+	return technicalServerID
 }

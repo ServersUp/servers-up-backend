@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/ServersUp/servers-up-backend/internal/config"
@@ -145,33 +144,12 @@ func formatDiscordContent(job models.GuildNotifyJob, serverLabel string) string 
 }
 
 func (h *Handler) humanServerName(ctx context.Context, technicalServerID string) string {
-	// Expected: provider#region#identifier
-	parts := strings.Split(technicalServerID, "#")
-	if len(parts) != 3 {
-		return technicalServerID
-	}
-	provider := parts[0]
-	region := parts[1]
-	identifier := parts[2]
-
 	mapping, err := h.getServerMapping(ctx)
 	if err != nil {
 		slog.Warn("failed to load server mapping; falling back to technical server id", "error", err)
 		return technicalServerID
 	}
-
-	for gameID, game := range mapping.Games {
-		if game.Provider != provider {
-			continue
-		}
-		for serverKey, server := range game.Servers {
-			if server.Region == region && fmt.Sprint(server.Identifier) == identifier {
-				return fmt.Sprintf("%s-%s", gameID, serverKey)
-			}
-		}
-	}
-
-	return technicalServerID
+	return mapping.HumanLabel(technicalServerID)
 }
 
 func (h *Handler) getServerMapping(ctx context.Context) (*servermap.Mapping, error) {

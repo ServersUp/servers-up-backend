@@ -270,7 +270,7 @@ func (h *Handler) subscriptionChoicesForQuery(ctx context.Context, guildID strin
 }
 
 func (h *Handler) subscriptionDisplayLabel(mapping servermap.Mapping, sub models.Subscription) string {
-	human := h.humanServerLabel(mapping, sub.ServerID)
+	human := mapping.HumanLabel(sub.ServerID)
 	if sub.RoleName != "" {
 		return fmt.Sprintf("%s @%s", human, sub.RoleName)
 	}
@@ -282,7 +282,7 @@ func (h *Handler) subscriptionDisplayLabel(mapping servermap.Mapping, sub models
 
 // subscriptionUnsubscribeChoiceText is shown in autocomplete only (no subscription IDs; role as @Name when known).
 func (h *Handler) subscriptionUnsubscribeChoiceText(ctx context.Context, guildID string, mapping servermap.Mapping, sub models.Subscription) string {
-	game, server := splitGameServerHuman(h.humanServerLabel(mapping, sub.ServerID))
+	game, server := splitGameServerHuman(mapping.HumanLabel(sub.ServerID))
 	role := h.subscriptionRoleDisplay(sub)
 	ch := h.channelPretty(ctx, guildID, sub.ChannelID)
 	return fmt.Sprintf("%s · %s · %s · in %s", game, server, role, ch)
@@ -582,7 +582,7 @@ func (h *Handler) handleUnsubscribe(ctx context.Context, interaction discord.Int
 		return h.discordResponse("System error: Unable to load server configuration right now. Please try again in a bit.")
 	}
 
-	human := h.humanServerLabel(mapping, match.ServerID)
+	human := mapping.HumanLabel(match.ServerID)
 	slog.Info("unsubscribe request resolved",
 		"guildID", interaction.GuildID,
 		"requestedChannelID", interaction.ChannelID,
@@ -677,7 +677,7 @@ func (h *Handler) handleListSubscriptions(ctx context.Context, interaction disco
 		})
 
 		for _, sub := range entries {
-			human := h.humanServerLabel(mapping, sub.ServerID)
+			human := mapping.HumanLabel(sub.ServerID)
 			if sub.Mention != "" {
 				lines = append(lines, fmt.Sprintf("- `%s` %s", human, sub.Mention))
 			} else {
@@ -721,28 +721,6 @@ func (h *Handler) handleGames(ctx context.Context) (events.LambdaFunctionURLResp
 		b.WriteString("`\n")
 	}
 	return h.discordResponse(strings.TrimRight(b.String(), "\n"))
-}
-
-func (h *Handler) humanServerLabel(mapping servermap.Mapping, technicalServerID string) string {
-	parts := strings.Split(technicalServerID, "#")
-	if len(parts) != 3 {
-		return technicalServerID
-	}
-	provider := parts[0]
-	region := parts[1]
-	identifier := parts[2]
-
-	for gameID, game := range mapping.Games {
-		if game.Provider != provider {
-			continue
-		}
-		for serverKey, server := range game.Servers {
-			if server.Region == region && fmt.Sprint(server.Identifier) == identifier {
-				return fmt.Sprintf("%s-%s", gameID, serverKey)
-			}
-		}
-	}
-	return technicalServerID
 }
 
 // Helper methods for standardized responses
