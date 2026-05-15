@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/ServersUp/servers-up-backend/internal/config"
+	"github.com/ServersUp/servers-up-backend/internal/logsetup"
 	"github.com/ServersUp/servers-up-backend/internal/models"
 	"github.com/ServersUp/servers-up-backend/internal/servermap"
 	"github.com/aws/aws-lambda-go/events"
@@ -244,7 +245,7 @@ func (c *discordHTTPClient) SendChannelMessage(ctx context.Context, channelID, c
 }
 
 func main() {
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+	logsetup.ConfigureDefaultFromEnv()
 	handler := NewHandler()
 	lambda.Start(handler.HandleRequest)
 }
