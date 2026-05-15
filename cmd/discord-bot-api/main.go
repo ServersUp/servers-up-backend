@@ -50,9 +50,7 @@ type Handler struct {
 	httpClient       *http.Client
 	discordBotToken  string
 
-	mappingMu       sync.RWMutex
-	mappingCached   servermap.Mapping
-	mappingCachedAt time.Time
+	mappingCache *servermap.CachedMapping
 
 	channelNamesMu    sync.RWMutex
 	channelNamesGuild string
@@ -63,7 +61,6 @@ type Handler struct {
 const (
 	defaultConfigBucket     = "serversup-config"
 	defaultServerMappingKey = "server-mapping.json"
-	mappingCacheTTL         = 60 * time.Second
 	channelNamesCacheTTL    = 2 * time.Minute
 )
 
@@ -104,6 +101,7 @@ func NewHandler(ctx context.Context) *Handler {
 		discordPublicKey: publicKey,
 		httpClient:       httpClient,
 		discordBotToken:  botToken,
+		mappingCache:     servermap.NewCachedMapping(servermap.CacheTTLFromEnv()),
 	}
 }
 
@@ -755,24 +753,7 @@ func (h *Handler) jsonResponse(statusCode int, body any) (events.LambdaFunctionU
 }
 
 func (h *Handler) loadServerMapping(ctx context.Context) (servermap.Mapping, error) {
-	h.mappingMu.RLock()
-	if !h.mappingCachedAt.IsZero() && time.Since(h.mappingCachedAt) < mappingCacheTTL {
-		m := h.mappingCached
-		h.mappingMu.RUnlock()
-		return m, nil
-	}
-	h.mappingMu.RUnlock()
-
-	mapping, err := h.loadServerMappingFromS3(ctx)
-	if err != nil {
-		return servermap.Mapping{}, err
-	}
-
-	h.mappingMu.Lock()
-	h.mappingCached = mapping
-	h.mappingCachedAt = time.Now()
-	h.mappingMu.Unlock()
-	return mapping, nil
+	return h.mappingCache.Get(ctx, h.loadServerMappingFromS3)
 }
 
 func (h *Handler) loadServerMappingFromS3(ctx context.Context) (servermap.Mapping, error) {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ServersUp/servers-up-backend/internal/models"
 	"github.com/ServersUp/servers-up-backend/internal/servermap"
@@ -34,7 +35,7 @@ func TestHandleRequest_success_singleMessage(t *testing.T) {
 	t.Parallel()
 
 	md := &mockDiscord{}
-	h := &Handler{discord: md}
+	h := newTestHandler(md, servermap.Mapping{})
 
 	ev := events.SQSEvent{
 		Records: []events.SQSMessage{
@@ -65,7 +66,7 @@ func TestHandleRequest_success_withRoleMention(t *testing.T) {
 	t.Parallel()
 
 	md := &mockDiscord{}
-	h := &Handler{discord: md}
+	h := newTestHandler(md, servermap.Mapping{})
 
 	ev := events.SQSEvent{
 		Records: []events.SQSMessage{
@@ -90,23 +91,26 @@ func TestHandleRequest_success_withRoleMention(t *testing.T) {
 	}
 }
 
+func newTestHandler(discord DiscordClient, mapping servermap.Mapping) *Handler {
+	cache := servermap.NewCachedMapping(time.Hour)
+	cache.Seed(mapping)
+	return &Handler{discord: discord, mappingCache: cache}
+}
+
 func TestHandleRequest_usesHumanServerNameWhenMappingAvailable(t *testing.T) {
 	t.Parallel()
 
 	md := &mockDiscord{}
-	h := &Handler{
-		discord: md,
-		serverMapping: &servermap.Mapping{
-			Games: map[string]servermap.Game{
-				"wow": {
-					Provider: "battlenet",
-					Servers: map[string]servermap.Server{
-						"illidan": {Region: "us", Identifier: 57},
-					},
+	h := newTestHandler(md, servermap.Mapping{
+		Games: map[string]servermap.Game{
+			"wow": {
+				Provider: "battlenet",
+				Servers: map[string]servermap.Server{
+					"illidan": {Region: "us", Identifier: 57},
 				},
 			},
 		},
-	}
+	})
 
 	ev := events.SQSEvent{
 		Records: []events.SQSMessage{
@@ -136,7 +140,7 @@ func TestHandleRequest_invalidJSON_marksFailure(t *testing.T) {
 	t.Parallel()
 
 	md := &mockDiscord{}
-	h := &Handler{discord: md}
+	h := newTestHandler(md, servermap.Mapping{})
 
 	ev := events.SQSEvent{
 		Records: []events.SQSMessage{
@@ -159,7 +163,7 @@ func TestHandleRequest_missingFields_marksFailure(t *testing.T) {
 	t.Parallel()
 
 	md := &mockDiscord{}
-	h := &Handler{discord: md}
+	h := newTestHandler(md, servermap.Mapping{})
 
 	ev := events.SQSEvent{
 		Records: []events.SQSMessage{
@@ -192,7 +196,7 @@ func TestHandleRequest_partialFailure_onlyFailsBadMessage(t *testing.T) {
 			return nil
 		},
 	}
-	h := &Handler{discord: md}
+	h := newTestHandler(md, servermap.Mapping{})
 
 	ev := events.SQSEvent{
 		Records: []events.SQSMessage{
@@ -219,7 +223,7 @@ func TestProcessRecord_propagatesDiscordError(t *testing.T) {
 	md := &mockDiscord{sendFunc: func(ctx context.Context, channelID, content, roleID string) error {
 		return errors.New("boom")
 	}}
-	h := &Handler{discord: md}
+	h := newTestHandler(md, servermap.Mapping{})
 
 	err := h.processRecord(context.Background(), events.SQSMessage{
 		MessageId: "m1",
@@ -250,7 +254,7 @@ func TestHandleRequest_discordError_marksFailure(t *testing.T) {
 	md := &mockDiscord{sendFunc: func(ctx context.Context, channelID, content, roleID string) error {
 		return errors.New("discord down")
 	}}
-	h := &Handler{discord: md}
+	h := newTestHandler(md, servermap.Mapping{})
 
 	ev := events.SQSEvent{Records: []events.SQSMessage{
 		{MessageId: "m1", Body: `{"serverId":"x","status":"UP","guildId":"g","channelId":"c","roleId":""}`},
@@ -267,7 +271,7 @@ func TestHandleRequest_discordError_marksFailure(t *testing.T) {
 
 func TestHandleRequest_noRecords(t *testing.T) {
 	t.Parallel()
-	h := &Handler{discord: &mockDiscord{}}
+	h := newTestHandler(&mockDiscord{}, servermap.Mapping{})
 	resp, err := h.HandleRequest(context.Background(), events.SQSEvent{})
 	if err != nil {
 		t.Fatal(err)
@@ -288,7 +292,7 @@ func TestHandleRequest_stillContinuesAfterFailure(t *testing.T) {
 			return nil
 		},
 	}
-	h := &Handler{discord: md}
+	h := newTestHandler(md, servermap.Mapping{})
 
 	ev := events.SQSEvent{Records: []events.SQSMessage{
 		{MessageId: "a", Body: `{"serverId":"x","status":"DOWN","guildId":"g","channelId":"c","roleId":""}`},

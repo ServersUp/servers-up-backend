@@ -72,6 +72,7 @@ func TestHandleRequest(t *testing.T) {
 		database:         mockDB,
 		configProvider:   mockConfig,
 		discordPublicKey: publicKeyHex,
+		mappingCache:     servermap.NewCachedMapping(0),
 	}
 
 	t.Run("Ping (Type 1)", func(t *testing.T) {
