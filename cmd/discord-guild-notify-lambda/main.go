@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/ServersUp/servers-up-backend/internal/config"
@@ -29,7 +28,7 @@ type DiscordClient interface {
 type Handler struct {
 	discord         DiscordClient
 	configProvider  *config.Provider
-	serverMapping   *servermap.Mapping
+	mappingCache     *servermap.CachedMapping
 	configBucket    string
 	serverMappingKey string
 }
@@ -71,7 +70,8 @@ func NewHandler() *Handler {
 			baseURL:    "https://discord.com/api/v10",
 			botToken:   token,
 		},
-		configProvider:  provider,
+		configProvider:   provider,
+		mappingCache:     servermap.NewCachedMapping(servermap.CacheTTLFromEnv()),
 		configBucket:    bucket,
 		serverMappingKey: key,
 	}
@@ -144,48 +144,25 @@ func formatDiscordContent(job models.GuildNotifyJob, serverLabel string) string 
 }
 
 func (h *Handler) humanServerName(ctx context.Context, technicalServerID string) string {
-	// Expected: provider#region#identifier
-	parts := strings.Split(technicalServerID, "#")
-	if len(parts) != 3 {
-		return technicalServerID
-	}
-	provider := parts[0]
-	region := parts[1]
-	identifier := parts[2]
-
-	mapping, err := h.getServerMapping(ctx)
+	mapping, err := h.loadServerMapping(ctx)
 	if err != nil {
 		slog.Warn("failed to load server mapping; falling back to technical server id", "error", err)
 		return technicalServerID
 	}
-
-	for gameID, game := range mapping.Games {
-		if game.Provider != provider {
-			continue
-		}
-		for serverKey, server := range game.Servers {
-			if server.Region == region && fmt.Sprint(server.Identifier) == identifier {
-				return fmt.Sprintf("%s-%s", gameID, serverKey)
-			}
-		}
-	}
-
-	return technicalServerID
+	return mapping.HumanLabel(technicalServerID)
 }
 
-func (h *Handler) getServerMapping(ctx context.Context) (*servermap.Mapping, error) {
-	if h.serverMapping != nil {
-		return h.serverMapping, nil
-	}
-	if h.configProvider == nil {
-		return nil, fmt.Errorf("missing config provider")
-	}
-	var m servermap.Mapping
-	if err := h.configProvider.LoadJSONFromS3(ctx, h.configBucket, h.serverMappingKey, &m); err != nil {
-		return nil, err
-	}
-	h.serverMapping = &m
-	return h.serverMapping, nil
+func (h *Handler) loadServerMapping(ctx context.Context) (servermap.Mapping, error) {
+	return h.mappingCache.Get(ctx, func(ctx context.Context) (servermap.Mapping, error) {
+		if h.configProvider == nil {
+			return servermap.Mapping{}, fmt.Errorf("missing config provider")
+		}
+		var m servermap.Mapping
+		if err := h.configProvider.LoadJSONFromS3(ctx, h.configBucket, h.serverMappingKey, &m); err != nil {
+			return servermap.Mapping{}, err
+		}
+		return m, nil
+	})
 }
 
 type discordHTTPClient struct {

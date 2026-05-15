@@ -49,9 +49,7 @@ type Handler struct {
 	httpClient       *http.Client
 	discordBotToken  string
 
-	mappingMu       sync.RWMutex
-	mappingCached   servermap.Mapping
-	mappingCachedAt time.Time
+	mappingCache *servermap.CachedMapping
 
 	channelNamesMu    sync.RWMutex
 	channelNamesGuild string
@@ -62,7 +60,6 @@ type Handler struct {
 const (
 	defaultConfigBucket     = "serversup-config"
 	defaultServerMappingKey = "server-mapping.json"
-	mappingCacheTTL         = 60 * time.Second
 	channelNamesCacheTTL    = 2 * time.Minute
 )
 
@@ -103,6 +100,7 @@ func NewHandler(ctx context.Context) *Handler {
 		discordPublicKey: publicKey,
 		httpClient:       httpClient,
 		discordBotToken:  botToken,
+		mappingCache:     servermap.NewCachedMapping(servermap.CacheTTLFromEnv()),
 	}
 }
 
@@ -269,7 +267,7 @@ func (h *Handler) subscriptionChoicesForQuery(ctx context.Context, guildID strin
 }
 
 func (h *Handler) subscriptionDisplayLabel(mapping servermap.Mapping, sub models.Subscription) string {
-	human := h.humanServerLabel(mapping, sub.ServerID)
+	human := mapping.HumanLabel(sub.ServerID)
 	if sub.RoleName != "" {
 		return fmt.Sprintf("%s @%s", human, sub.RoleName)
 	}
@@ -281,7 +279,7 @@ func (h *Handler) subscriptionDisplayLabel(mapping servermap.Mapping, sub models
 
 // subscriptionUnsubscribeChoiceText is shown in autocomplete only (no subscription IDs; role as @Name when known).
 func (h *Handler) subscriptionUnsubscribeChoiceText(ctx context.Context, guildID string, mapping servermap.Mapping, sub models.Subscription) string {
-	game, server := splitGameServerHuman(h.humanServerLabel(mapping, sub.ServerID))
+	game, server := splitGameServerHuman(mapping.HumanLabel(sub.ServerID))
 	role := h.subscriptionRoleDisplay(sub)
 	ch := h.channelPretty(ctx, guildID, sub.ChannelID)
 	return fmt.Sprintf("%s · %s · %s · in %s", game, server, role, ch)
@@ -581,7 +579,7 @@ func (h *Handler) handleUnsubscribe(ctx context.Context, interaction discord.Int
 		return h.discordResponse("System error: Unable to load server configuration right now. Please try again in a bit.")
 	}
 
-	human := h.humanServerLabel(mapping, match.ServerID)
+	human := mapping.HumanLabel(match.ServerID)
 	slog.Info("unsubscribe request resolved",
 		"guildID", interaction.GuildID,
 		"requestedChannelID", interaction.ChannelID,
@@ -676,7 +674,7 @@ func (h *Handler) handleListSubscriptions(ctx context.Context, interaction disco
 		})
 
 		for _, sub := range entries {
-			human := h.humanServerLabel(mapping, sub.ServerID)
+			human := mapping.HumanLabel(sub.ServerID)
 			if sub.Mention != "" {
 				lines = append(lines, fmt.Sprintf("- `%s` %s", human, sub.Mention))
 			} else {
@@ -722,28 +720,6 @@ func (h *Handler) handleGames(ctx context.Context) (events.LambdaFunctionURLResp
 	return h.discordResponse(strings.TrimRight(b.String(), "\n"))
 }
 
-func (h *Handler) humanServerLabel(mapping servermap.Mapping, technicalServerID string) string {
-	parts := strings.Split(technicalServerID, "#")
-	if len(parts) != 3 {
-		return technicalServerID
-	}
-	provider := parts[0]
-	region := parts[1]
-	identifier := parts[2]
-
-	for gameID, game := range mapping.Games {
-		if game.Provider != provider {
-			continue
-		}
-		for serverKey, server := range game.Servers {
-			if server.Region == region && fmt.Sprint(server.Identifier) == identifier {
-				return fmt.Sprintf("%s-%s", gameID, serverKey)
-			}
-		}
-	}
-	return technicalServerID
-}
-
 // Helper methods for standardized responses
 
 func (h *Handler) getOption(options []discord.InteractionOption, name string) string {
@@ -776,24 +752,7 @@ func (h *Handler) jsonResponse(statusCode int, body any) (events.LambdaFunctionU
 }
 
 func (h *Handler) loadServerMapping(ctx context.Context) (servermap.Mapping, error) {
-	h.mappingMu.RLock()
-	if !h.mappingCachedAt.IsZero() && time.Since(h.mappingCachedAt) < mappingCacheTTL {
-		m := h.mappingCached
-		h.mappingMu.RUnlock()
-		return m, nil
-	}
-	h.mappingMu.RUnlock()
-
-	mapping, err := h.loadServerMappingFromS3(ctx)
-	if err != nil {
-		return servermap.Mapping{}, err
-	}
-
-	h.mappingMu.Lock()
-	h.mappingCached = mapping
-	h.mappingCachedAt = time.Now()
-	h.mappingMu.Unlock()
-	return mapping, nil
+	return h.mappingCache.Get(ctx, h.loadServerMappingFromS3)
 }
 
 func (h *Handler) loadServerMappingFromS3(ctx context.Context) (servermap.Mapping, error) {
