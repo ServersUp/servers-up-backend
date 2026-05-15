@@ -17,6 +17,7 @@ import (
 	"github.com/ServersUp/servers-up-backend/internal/config"
 	"github.com/ServersUp/servers-up-backend/internal/db"
 	"github.com/ServersUp/servers-up-backend/internal/discord"
+	"github.com/ServersUp/servers-up-backend/internal/logsetup"
 	"github.com/ServersUp/servers-up-backend/internal/models"
 	"github.com/ServersUp/servers-up-backend/internal/serverid"
 	"github.com/ServersUp/servers-up-backend/internal/servermap"
@@ -820,7 +821,7 @@ func (h *Handler) formatLookupError(mapping servermap.Mapping, err error, rawGam
 }
 
 func main() {
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	logsetup.ConfigureDefaultFromEnv()
 	handler := NewHandler(context.Background())
 	lambda.Start(handler.HandleRequest)
 }
