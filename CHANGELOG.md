@@ -4,7 +4,7 @@ All notable user-facing changes to ServersUp Backend will be documented in this 
 
 This changelog is intended to be readable for end users and can be published directly to the project website.
 
-## Unreleased
+## v1.0.1 — 2026-05-13
 
 ### Added
 - **`/games`** — list supported games from the configured server mapping (same source as `/subscribe` autocomplete).
@@ -26,4 +26,3 @@ This changelog is intended to be readable for end users and can be published dir
 ### Changed
 - **Discord commands**:
   - `/games` and `/servers` are no longer exposed; discovery happens through `/subscribe` autocomplete and `/subscriptions`.
-
