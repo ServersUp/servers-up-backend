@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/ServersUp/servers-up-backend/internal/models"
@@ -28,7 +29,10 @@ type dynamodbAPI interface {
 
 const guildIDIndexName = "GuildIdIndex"
 
-var ErrStatusUnchanged = errors.New("status unchanged")
+var (
+	ErrStatusUnchanged          = errors.New("status unchanged")
+	ErrCorruptSubscriptionRows  = errors.New("corrupt subscription rows")
+)
 
 func NewDatabase(client dynamodbAPI, tableName string) *Database {
 	return &Database{
@@ -136,13 +140,11 @@ func (db *Database) ListSubscriptionsByGuild(ctx context.Context, guildID string
 			return nil, fmt.Errorf("failed to query subscriptions by guild: %w", err)
 		}
 
-		for _, item := range qout.Items {
-			var sub models.Subscription
-			if err := attributevalue.UnmarshalMap(item, &sub); err != nil {
-				continue
-			}
-			out = append(out, sub)
+		updated, err := appendSubscriptionsFromItems(out, qout.Items, "guildId", guildID)
+		if err != nil {
+			return nil, err
 		}
+		out = updated
 
 		if qout.LastEvaluatedKey == nil {
 			break
@@ -196,13 +198,11 @@ func (db *Database) ListSubscriptionsByServer(ctx context.Context, serverID stri
 			return nil, fmt.Errorf("failed to query subscriptions: %w", err)
 		}
 
-		for _, item := range qout.Items {
-			var sub models.Subscription
-			if err := attributevalue.UnmarshalMap(item, &sub); err != nil {
-				continue
-			}
-			out = append(out, sub)
+		updated, err := appendSubscriptionsFromItems(out, qout.Items, "serverId", serverID)
+		if err != nil {
+			return nil, err
 		}
+		out = updated
 
 		if qout.LastEvaluatedKey == nil {
 			break
@@ -210,5 +210,26 @@ func (db *Database) ListSubscriptionsByServer(ctx context.Context, serverID stri
 		startKey = qout.LastEvaluatedKey
 	}
 
+	return out, nil
+}
+
+func appendSubscriptionsFromItems(out []models.Subscription, items []map[string]types.AttributeValue, contextKey, contextValue string) ([]models.Subscription, error) {
+	var corrupt int
+	for _, item := range items {
+		var sub models.Subscription
+		if err := attributevalue.UnmarshalMap(item, &sub); err != nil {
+			corrupt++
+			slog.Warn("failed to unmarshal subscription row",
+				"contextKey", contextKey,
+				"contextValue", contextValue,
+				"error", err,
+			)
+			continue
+		}
+		out = append(out, sub)
+	}
+	if corrupt > 0 {
+		return nil, fmt.Errorf("%w: %d item(s)", ErrCorruptSubscriptionRows, corrupt)
+	}
 	return out, nil
 }
