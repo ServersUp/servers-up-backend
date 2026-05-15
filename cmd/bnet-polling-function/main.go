@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"sync"
@@ -24,6 +25,7 @@ type Handler struct {
 	database       *db.Database
 }
 
+// NewHandler loads AWS clients; on failure it logs and exits (see main).
 func NewHandler(ctx context.Context) *Handler {
 	cfg, err := awsconfig.LoadDefaultConfig(ctx)
 	if err != nil {
@@ -100,7 +102,7 @@ func (h *Handler) HandleRequest(ctx context.Context, event events.CloudWatchEven
 
 			// Store the status using the generalized database layer.
 			if err := h.database.SaveServerStatus(ctx, "wow", "battlenet", bnetConfig.Region, r.ConnectedRealmID, statusType); err != nil {
-				if err == db.ErrStatusUnchanged {
+				if errors.Is(err, db.ErrStatusUnchanged) {
 					// Status is unchanged; avoid counting/logging this as an error.
 					atomic.AddInt32(&successCount, 1)
 					return
@@ -127,10 +129,7 @@ func (h *Handler) HandleRequest(ctx context.Context, event events.CloudWatchEven
 }
 
 func main() {
-	// Configure slog to output JSON to stdout. This is the best practice for
-	// AWS Lambda as it allows CloudWatch Insights to parse logs automatically.
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
-
 	handler := NewHandler(context.Background())
 	lambda.Start(handler.HandleRequest)
 }
