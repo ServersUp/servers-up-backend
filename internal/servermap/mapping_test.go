@@ -63,7 +63,10 @@ func TestNormalizeKey(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"Area 52", "area-52"},
 		{"AREA_52", "area-52"},
+		{"  Illidan ", "illidan"},
 		{"", ""},
+		{"---", ""},
+		{"foo__bar", "foo-bar"},
 	}
 	for _, tc := range cases {
 		if got := NormalizeKey(tc.in); got != tc.want {
