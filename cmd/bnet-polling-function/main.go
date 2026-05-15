@@ -11,6 +11,7 @@ import (
 	"github.com/ServersUp/servers-up-backend/internal/bnet"
 	"github.com/ServersUp/servers-up-backend/internal/config"
 	"github.com/ServersUp/servers-up-backend/internal/db"
+	"github.com/ServersUp/servers-up-backend/internal/logsetup"
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -129,7 +130,7 @@ func (h *Handler) HandleRequest(ctx context.Context, event events.CloudWatchEven
 }
 
 func main() {
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+	logsetup.ConfigureDefaultFromEnv()
 	handler := NewHandler(context.Background())
 	lambda.Start(handler.HandleRequest)
 }

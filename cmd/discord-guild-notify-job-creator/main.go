@@ -9,6 +9,7 @@ import (
 	"regexp"
 
 	"github.com/ServersUp/servers-up-backend/internal/db"
+	"github.com/ServersUp/servers-up-backend/internal/logsetup"
 	"github.com/ServersUp/servers-up-backend/internal/models"
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
@@ -34,6 +35,7 @@ type messageSender interface {
 }
 
 // Handler wires DynamoDB stream events to Discord guild notify SQS jobs.
+// NewHandler loads AWS clients; on failure it logs and exits (see main).
 type Handler struct {
 	list     subscriptionLister
 	sqs      messageSender
@@ -195,7 +197,7 @@ func roleIDFromMention(mention string) string {
 }
 
 func main() {
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+	logsetup.ConfigureDefaultFromEnv()
 	handler := NewHandler(context.Background())
 	lambda.Start(handler.HandleRequest)
 }
