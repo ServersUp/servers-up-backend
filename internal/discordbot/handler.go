@@ -114,11 +114,19 @@ func (h *Handler) HandleRequest(ctx context.Context, request events.LambdaFuncti
 		bodyBytes = decoded
 	}
 
-	// Log incoming request details for troubleshooting
-	slog.Debug("Incoming Discord Request", "sig", signature, "ts", timestamp, "body", string(bodyBytes), "isBase64", request.IsBase64Encoded)
+	slog.Debug("discord request received",
+		"bodyLen", len(bodyBytes),
+		"isBase64", request.IsBase64Encoded,
+		"hasSignature", signature != "",
+	)
+
+	if err := discord.ValidateSignatureTimestamp(timestamp, time.Now(), discord.DefaultSignatureMaxSkew); err != nil {
+		slog.Warn("Invalid or replayed discord request timestamp", "error", err)
+		return events.LambdaFunctionURLResponse{StatusCode: http.StatusUnauthorized, Body: "Invalid signature"}, nil
+	}
 
 	if err := discord.VerifySignature(h.discordPublicKey, signature, timestamp, string(bodyBytes)); err != nil {
-		slog.Warn("Invalid request signature", "error", err, "sig", signature, "ts", timestamp)
+		slog.Warn("Invalid request signature", "error", err)
 		return events.LambdaFunctionURLResponse{StatusCode: http.StatusUnauthorized, Body: "Invalid signature"}, nil
 	}
 
@@ -128,6 +136,8 @@ func (h *Handler) HandleRequest(ctx context.Context, request events.LambdaFuncti
 		slog.Error("failed to unmarshal interaction", "error", err)
 		return events.LambdaFunctionURLResponse{StatusCode: http.StatusBadRequest, Body: "Invalid JSON"}, nil
 	}
+
+	slog.Debug("discord interaction", "type", interaction.Type, "id", interaction.ID, "guildId", interaction.GuildID)
 
 	// 3. Handle Interaction Types
 	switch interaction.Type {

@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ServersUp/servers-up-backend/internal/discord"
 	"github.com/ServersUp/servers-up-backend/internal/models"
@@ -40,6 +42,11 @@ type MockConfig struct {
 
 func (m *MockConfig) LoadJSONFromS3(ctx context.Context, bucket, key string, target any) error {
 	return m.LoadFunc(ctx, bucket, key, target)
+}
+
+func discordSigTS(t *testing.T) string {
+	t.Helper()
+	return strconv.FormatInt(time.Now().Unix(), 10)
 }
 
 func TestHandleRequest(t *testing.T) {
@@ -77,7 +84,7 @@ func TestHandleRequest(t *testing.T) {
 
 	t.Run("Ping (Type 1)", func(t *testing.T) {
 		body := `{"type": 1}`
-		timestamp := "12345"
+		timestamp := discordSigTS(t)
 		sig := hex.EncodeToString(ed25519.Sign(priv, []byte(timestamp+body)))
 
 		resp, _ := handler.HandleRequest(context.Background(), events.LambdaFunctionURLRequest{
@@ -98,7 +105,7 @@ func TestHandleRequest(t *testing.T) {
 
 	t.Run("Subscribe (Type 2)", func(t *testing.T) {
 		body := `{"type": 2, "guild_id": "guild-1", "channel_id": "chan-1", "data": {"name": "subscribe", "options": [{"name": "game", "value": "wow"}, {"name": "server", "value": "illidan"}, {"name": "role", "value": "123"}]}}`
-		timestamp := "12345"
+		timestamp := discordSigTS(t)
 		sig := hex.EncodeToString(ed25519.Sign(priv, []byte(timestamp+body)))
 
 		mockDB.ListFunc = func(ctx context.Context, guildID string) ([]models.Subscription, error) {
@@ -135,7 +142,7 @@ func TestHandleRequest(t *testing.T) {
 
 	t.Run("Subscribe duplicate blocked (Type 2)", func(t *testing.T) {
 		body := `{"type": 2, "guild_id": "guild-1", "channel_id": "chan-1", "data": {"name": "subscribe", "options": [{"name": "game", "value": "wow"}, {"name": "server", "value": "illidan"}, {"name": "role", "value": "123"}]}}`
-		timestamp := "12345"
+		timestamp := discordSigTS(t)
 		sig := hex.EncodeToString(ed25519.Sign(priv, []byte(timestamp+body)))
 
 		var addCalls int
@@ -180,7 +187,7 @@ func TestHandleRequest(t *testing.T) {
 
 	t.Run("Unsubscribe removes selected subscription (Type 2)", func(t *testing.T) {
 		body := `{"type": 2, "guild_id": "guild-1", "channel_id": "chan-1", "data": {"name": "unsubscribe", "options": [{"name": "subscription", "value": "sub-illidan-1"}]}}`
-		timestamp := "12345"
+		timestamp := discordSigTS(t)
 		sig := hex.EncodeToString(ed25519.Sign(priv, []byte(timestamp+body)))
 
 		mockDB.ListFunc = func(ctx context.Context, guildID string) ([]models.Subscription, error) {
@@ -227,7 +234,7 @@ func TestHandleRequest(t *testing.T) {
 
 	t.Run("Games list (Type 2)", func(t *testing.T) {
 		body := `{"type": 2, "guild_id": "guild-1", "channel_id": "chan-1", "data": {"name": "games"}}`
-		timestamp := "12345"
+		timestamp := discordSigTS(t)
 		sig := hex.EncodeToString(ed25519.Sign(priv, []byte(timestamp+body)))
 
 		resp, _ := handler.HandleRequest(context.Background(), events.LambdaFunctionURLRequest{
@@ -259,7 +266,7 @@ func TestHandleRequest(t *testing.T) {
 
 	t.Run("Subscriptions list (Type 2)", func(t *testing.T) {
 		body := `{"type": 2, "guild_id": "guild-1", "channel_id": "chan-9", "data": {"name": "subscriptions"}}`
-		timestamp := "12345"
+		timestamp := discordSigTS(t)
 		sig := hex.EncodeToString(ed25519.Sign(priv, []byte(timestamp+body)))
 
 		mockDB.ListFunc = func(ctx context.Context, guildID string) ([]models.Subscription, error) {
@@ -299,7 +306,7 @@ func TestHandleRequest(t *testing.T) {
 		resp, _ := handler.HandleRequest(context.Background(), events.LambdaFunctionURLRequest{
 			Headers: map[string]string{
 				"x-signature-ed25519":   "wrong",
-				"x-signature-timestamp": "123",
+				"x-signature-timestamp": discordSigTS(t),
 			},
 			Body: `{"type": 1}`,
 		})
@@ -309,9 +316,27 @@ func TestHandleRequest(t *testing.T) {
 		}
 	})
 
+	t.Run("Stale signature timestamp", func(t *testing.T) {
+		body := `{"type": 1}`
+		stale := strconv.FormatInt(time.Now().Add(-10*time.Minute).Unix(), 10)
+		sig := hex.EncodeToString(ed25519.Sign(priv, []byte(stale+body)))
+
+		resp, _ := handler.HandleRequest(context.Background(), events.LambdaFunctionURLRequest{
+			Headers: map[string]string{
+				"x-signature-ed25519":   sig,
+				"x-signature-timestamp": stale,
+			},
+			Body: body,
+		})
+
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("expected 401 for stale timestamp (crypto valid), got %d", resp.StatusCode)
+		}
+	})
+
 	t.Run("Autocomplete game focused (Type 4)", func(t *testing.T) {
 		body := `{"type": 4, "guild_id": "guild-1", "data": {"name": "subscribe", "options": [{"type": 3, "name": "game", "value": "w", "focused": true}, {"type": 3, "name": "server"}]}}`
-		timestamp := "12345"
+		timestamp := discordSigTS(t)
 		sig := hex.EncodeToString(ed25519.Sign(priv, []byte(timestamp+body)))
 
 		resp, err := handler.HandleRequest(context.Background(), events.LambdaFunctionURLRequest{
@@ -347,7 +372,7 @@ func TestHandleRequest(t *testing.T) {
 
 	t.Run("Autocomplete subscription for unsubscribe (Type 4)", func(t *testing.T) {
 		body := `{"type": 4, "guild_id": "guild-1", "channel_id": "chan-999", "data": {"name": "unsubscribe", "options": [{"type": 3, "name": "subscription", "value": "ill", "focused": true}]}}`
-		timestamp := "12345"
+		timestamp := discordSigTS(t)
 		sig := hex.EncodeToString(ed25519.Sign(priv, []byte(timestamp+body)))
 
 		mockDB.ListFunc = func(ctx context.Context, guildID string) ([]models.Subscription, error) {
@@ -388,7 +413,7 @@ func TestHandleRequest(t *testing.T) {
 
 	t.Run("Autocomplete server focused without game (Type 4)", func(t *testing.T) {
 		body := `{"type": 4, "guild_id": "guild-1", "data": {"name": "subscribe", "options": [{"type": 3, "name": "server", "value": "ill", "focused": true}]}}`
-		timestamp := "12345"
+		timestamp := discordSigTS(t)
 		sig := hex.EncodeToString(ed25519.Sign(priv, []byte(timestamp+body)))
 
 		resp, err := handler.HandleRequest(context.Background(), events.LambdaFunctionURLRequest{
