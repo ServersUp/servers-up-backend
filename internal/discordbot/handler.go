@@ -114,11 +114,7 @@ func (h *Handler) HandleRequest(ctx context.Context, request events.LambdaFuncti
 		bodyBytes = decoded
 	}
 
-	slog.Debug("discord request received",
-		"bodyLen", len(bodyBytes),
-		"isBase64", request.IsBase64Encoded,
-		"hasSignature", signature != "",
-	)
+	debugLogIncomingDiscordRequest(request, len(bodyBytes))
 
 	if err := discord.ValidateSignatureTimestamp(timestamp, time.Now(), discord.DefaultSignatureMaxSkew); err != nil {
 		slog.Warn("Invalid or replayed discord request timestamp", "error", err)
