@@ -10,7 +10,12 @@ import (
 )
 
 func (h *Handler) channelPretty(ctx context.Context, guildID, channelID string) string {
-	if m := h.guildChannelNames(ctx, guildID); m != nil {
+	m, err := h.guildChannelNames(ctx, guildID)
+	if err != nil {
+		slog.Warn("discord: could not list guild channels", "error", err, "guildID", guildID)
+		return fmt.Sprintf("<#%s>", channelID)
+	}
+	if m != nil {
 		if n := m[channelID]; n != "" {
 			return "#" + n
 		}
@@ -18,28 +23,27 @@ func (h *Handler) channelPretty(ctx context.Context, guildID, channelID string) 
 	return fmt.Sprintf("<#%s>", channelID)
 }
 
-func (h *Handler) guildChannelNames(ctx context.Context, guildID string) map[string]string {
+func (h *Handler) guildChannelNames(ctx context.Context, guildID string) (map[string]string, error) {
 	if h.discordBotToken == "" {
-		return nil
+		return nil, nil
 	}
 	h.channelNamesMu.RLock()
 	if h.channelNamesGuild == guildID && h.channelNamesByID != nil &&
 		time.Since(h.channelNamesAt) < channelNamesCacheTTL {
 		m := h.channelNamesByID
 		h.channelNamesMu.RUnlock()
-		return m
+		return m, nil
 	}
 	h.channelNamesMu.RUnlock()
 
 	names, err := discord.GuildChannelNames(ctx, h.httpClient, h.discordBotToken, guildID)
 	if err != nil {
-		slog.Warn("discord: could not list guild channels", "error", err, "guildID", guildID)
-		return nil
+		return nil, err
 	}
 	h.channelNamesMu.Lock()
 	h.channelNamesGuild = guildID
 	h.channelNamesByID = names
 	h.channelNamesAt = time.Now()
 	h.channelNamesMu.Unlock()
-	return names
+	return names, nil
 }

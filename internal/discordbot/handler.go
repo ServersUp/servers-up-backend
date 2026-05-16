@@ -22,6 +22,15 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 )
 
+// logInteractionMarshalErr logs failures to serialize a Discord interaction response;
+// the client still receives resp (typically HTTP 500) and AWS Lambda sees a successful invoke.
+func logInteractionMarshalErr(ctx context.Context, resp events.LambdaFunctionURLResponse, err error) (events.LambdaFunctionURLResponse, error) {
+	if err != nil {
+		slog.ErrorContext(ctx, "failed to marshal interaction response", "error", err)
+	}
+	return resp, nil
+}
+
 // Database defines the required interface for the subscription store.
 type Database interface {
 	AddSubscription(ctx context.Context, sub models.Subscription) error
@@ -114,7 +123,7 @@ func (h *Handler) HandleRequest(ctx context.Context, request events.LambdaFuncti
 		bodyBytes = decoded
 	}
 
-	debugLogIncomingDiscordRequest(request, len(bodyBytes))
+	slog.LogAttrs(ctx, slog.LevelDebug, "discord request received", LambdaFunctionURLDebugAttrs(request, len(bodyBytes))...)
 
 	if err := discord.ValidateSignatureTimestamp(timestamp, time.Now(), discord.DefaultSignatureMaxSkew); err != nil {
 		slog.Warn("Invalid or replayed discord request timestamp", "error", err)
@@ -139,39 +148,50 @@ func (h *Handler) HandleRequest(ctx context.Context, request events.LambdaFuncti
 	switch interaction.Type {
 	case discord.InteractionTypePing:
 		slog.Info("Handling Discord Ping (Type 1)")
-		return h.jsonResponse(http.StatusOK, discord.InteractionResponse{Type: discord.InteractionResponseTypePong})
+		resp, err := h.jsonResponse(http.StatusOK, discord.InteractionResponse{Type: discord.InteractionResponseTypePong})
+		return logInteractionMarshalErr(ctx, resp, err)
 
 	case discord.InteractionTypeApplicationCommand:
 		var data discord.InteractionData
 		if err := json.Unmarshal(interaction.Data, &data); err != nil {
-			return h.discordResponse("Sorry — I couldn’t parse that command payload. Please try again.")
+			resp, derr := h.discordResponse("Sorry — I couldn’t parse that command payload. Please try again.")
+			return logInteractionMarshalErr(ctx, resp, derr)
 		}
 
 		slog.Info("Handling Slash Command", "command", data.Name, "guild", interaction.GuildID)
 
 		switch data.Name {
 		case "subscribe":
-			return h.handleSubscribe(ctx, interaction, data)
+			resp, err := h.handleSubscribe(ctx, interaction, data)
+			return logInteractionMarshalErr(ctx, resp, err)
 		case "unsubscribe":
-			return h.handleUnsubscribe(ctx, interaction, data)
+			resp, err := h.handleUnsubscribe(ctx, interaction, data)
+			return logInteractionMarshalErr(ctx, resp, err)
 		case "subscriptions":
-			return h.handleListSubscriptions(ctx, interaction)
+			resp, err := h.handleListSubscriptions(ctx, interaction)
+			return logInteractionMarshalErr(ctx, resp, err)
 		case "games":
-			return h.handleGames(ctx)
+			resp, err := h.handleGames(ctx)
+			return logInteractionMarshalErr(ctx, resp, err)
 		case "help":
-			return h.handleHelp()
+			resp, err := h.handleHelp()
+			return logInteractionMarshalErr(ctx, resp, err)
 		default:
-			return h.discordResponse("Unknown command. Use `/help` to see what I can do.")
+			resp, err := h.discordResponse("Unknown command. Use `/help` to see what I can do.")
+			return logInteractionMarshalErr(ctx, resp, err)
 		}
 
 	case discord.InteractionTypeApplicationCommandAutocomplete:
 		var data discord.InteractionData
 		if err := json.Unmarshal(interaction.Data, &data); err != nil {
 			slog.Warn("autocomplete: failed to parse interaction data", "error", err)
-			return h.autocompleteResponse(nil)
+			resp, aerr := h.autocompleteResponse(nil)
+			return logInteractionMarshalErr(ctx, resp, aerr)
 		}
-		return h.handleAutocomplete(ctx, interaction, data)
+		resp, err := h.handleAutocomplete(ctx, interaction, data)
+		return logInteractionMarshalErr(ctx, resp, err)
 	}
 
-	return h.discordResponse("Unsupported interaction type.")
+	resp, err := h.discordResponse("Unsupported interaction type.")
+	return logInteractionMarshalErr(ctx, resp, err)
 }

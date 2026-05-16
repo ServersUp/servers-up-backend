@@ -142,6 +142,9 @@ func (db *Database) ListSubscriptionsByGuild(ctx context.Context, guildID string
 
 		updated, err := appendSubscriptionsFromItems(out, qout.Items, "guildId", guildID)
 		if err != nil {
+			if errors.Is(err, ErrCorruptSubscriptionRows) {
+				slog.Warn("corrupt subscription rows in dynamodb query", "error", err, "guildId", guildID)
+			}
 			return nil, err
 		}
 		out = updated
@@ -200,6 +203,9 @@ func (db *Database) ListSubscriptionsByServer(ctx context.Context, serverID stri
 
 		updated, err := appendSubscriptionsFromItems(out, qout.Items, "serverId", serverID)
 		if err != nil {
+			if errors.Is(err, ErrCorruptSubscriptionRows) {
+				slog.Warn("corrupt subscription rows in dynamodb query", "error", err, "serverId", serverID)
+			}
 			return nil, err
 		}
 		out = updated
@@ -219,17 +225,12 @@ func appendSubscriptionsFromItems(out []models.Subscription, items []map[string]
 		var sub models.Subscription
 		if err := attributevalue.UnmarshalMap(item, &sub); err != nil {
 			corrupt++
-			slog.Warn("failed to unmarshal subscription row",
-				"contextKey", contextKey,
-				"contextValue", contextValue,
-				"error", err,
-			)
 			continue
 		}
 		out = append(out, sub)
 	}
 	if corrupt > 0 {
-		return nil, fmt.Errorf("%w: %d item(s)", ErrCorruptSubscriptionRows, corrupt)
+		return nil, fmt.Errorf("%w: %d item(s) (%s=%q)", ErrCorruptSubscriptionRows, corrupt, contextKey, contextValue)
 	}
 	return out, nil
 }
