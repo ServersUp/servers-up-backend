@@ -2,7 +2,7 @@ package discordbot
 
 import (
 	"encoding/json"
-	"log/slog"
+	"fmt"
 	"net/http"
 
 	"github.com/ServersUp/servers-up-backend/internal/discord"
@@ -42,12 +42,11 @@ func (h *Handler) discordResponse(content string) (events.LambdaFunctionURLRespo
 func (h *Handler) jsonResponse(statusCode int, body any) (events.LambdaFunctionURLResponse, error) {
 	jsonBytes, err := json.Marshal(body)
 	if err != nil {
-		slog.Error("failed to marshal interaction response", "error", err)
 		return events.LambdaFunctionURLResponse{
 			StatusCode: http.StatusInternalServerError,
 			Body:       `{"error":"internal"}`,
 			Headers:    map[string]string{"Content-Type": "application/json"},
-		}, nil
+		}, fmt.Errorf("marshal interaction response: %w", err)
 	}
 	return events.LambdaFunctionURLResponse{
 		StatusCode: statusCode,

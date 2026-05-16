@@ -4,7 +4,34 @@ import (
 	"crypto/ed25519"
 	"encoding/hex"
 	"fmt"
+	"strconv"
+	"time"
 )
+
+// DefaultSignatureMaxSkew is the maximum allowed clock skew for
+// x-signature-timestamp when validating Discord interactions (± this duration).
+const DefaultSignatureMaxSkew = 5 * time.Minute
+
+// ValidateSignatureTimestamp rejects replayed requests when Discord's
+// x-signature-timestamp is not within now±maxSkew. Discord sends Unix time in seconds.
+func ValidateSignatureTimestamp(timestamp string, now time.Time, maxSkew time.Duration) error {
+	if timestamp == "" {
+		return fmt.Errorf("empty signature timestamp")
+	}
+	sec, err := strconv.ParseInt(timestamp, 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid signature timestamp: %w", err)
+	}
+	ts := time.Unix(sec, 0).UTC()
+	delta := now.Sub(ts)
+	if delta < 0 {
+		delta = -delta
+	}
+	if delta > maxSkew {
+		return fmt.Errorf("signature timestamp outside allowed skew")
+	}
+	return nil
+}
 
 // VerifySignature validates that a request came from Discord using Ed25519.
 // Discord sends a signature and a timestamp which must be combined with the body.
