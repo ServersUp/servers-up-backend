@@ -4,6 +4,15 @@ All notable user-facing changes to ServersUp Backend will be documented in this 
 
 This changelog is intended to be readable for end users and can be published directly to the project website.
 
+## v1.0.2 — 2026-05-15
+
+### Added
+- **`/servers`** — list servers configured for a game (game autocomplete). Long lists link to the [supported games page](https://serversup.github.io/#games); for **wow**, also shows popular US realm names.
+- **`/status`** — show the current **UP/DOWN** status for a game + server (same autocomplete as `/subscribe`).
+
+### Changed
+- **`/status`** — rate-limited per user and per guild (in-process); repeated checks within a short window get an ephemeral “slow down” message instead of hitting the database every time.
+
 ## v1.0.1 — 2026-05-13
 
 ### Added

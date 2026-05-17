@@ -46,12 +46,15 @@ type ConfigProvider interface {
 // Handler manages the dependencies for the Discord Bot API.
 type Handler struct {
 	database         Database
+	statusStore      StatusStore
 	configProvider   ConfigProvider
 	discordPublicKey string
 	httpClient       *http.Client
 	discordBotToken  string
 
-	mappingCache *servermap.CachedMapping
+	mappingCache  *servermap.CachedMapping
+	statusLimiter *statusRateLimiter
+	statusCache   *statusResultCache
 
 	channelNamesMu    sync.RWMutex
 	channelNamesGuild string
@@ -96,14 +99,23 @@ func NewHandler(ctx context.Context) *Handler {
 		}
 	}
 
-	return &Handler{
-		database:         db.NewDatabase(dynamodb.NewFromConfig(cfg), os.Getenv("DDB_SUBSCRIPTIONS_TABLE_NAME")),
+	ddbClient := dynamodb.NewFromConfig(cfg)
+	h := &Handler{
+		database:         db.NewDatabase(ddbClient, os.Getenv("DDB_SUBSCRIPTIONS_TABLE_NAME")),
 		configProvider:   provider,
 		discordPublicKey: publicKey,
 		httpClient:       httpClient,
 		discordBotToken:  botToken,
 		mappingCache:     servermap.NewCachedMapping(servermap.CacheTTLFromEnv()),
+		statusLimiter:    newStatusRateLimiter(),
+		statusCache:      newStatusResultCache(),
 	}
+	if statusTable := os.Getenv("DDB_TABLE_NAME"); statusTable != "" {
+		h.statusStore = db.NewDatabase(ddbClient, statusTable)
+	} else {
+		slog.Warn("DDB_TABLE_NAME not set; /status will be unavailable")
+	}
+	return h
 }
 
 func (h *Handler) HandleRequest(ctx context.Context, request events.LambdaFunctionURLRequest) (events.LambdaFunctionURLResponse, error) {
@@ -172,6 +184,12 @@ func (h *Handler) HandleRequest(ctx context.Context, request events.LambdaFuncti
 			return logInteractionMarshalErr(ctx, resp, err)
 		case "games":
 			resp, err := h.handleGames(ctx)
+			return logInteractionMarshalErr(ctx, resp, err)
+		case "servers":
+			resp, err := h.handleServers(ctx, data)
+			return logInteractionMarshalErr(ctx, resp, err)
+		case "status":
+			resp, err := h.handleStatus(ctx, interaction, data)
 			return logInteractionMarshalErr(ctx, resp, err)
 		case "help":
 			resp, err := h.handleHelp()

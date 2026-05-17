@@ -30,8 +30,9 @@ type dynamodbAPI interface {
 const guildIDIndexName = "GuildIdIndex"
 
 var (
-	ErrStatusUnchanged          = errors.New("status unchanged")
-	ErrCorruptSubscriptionRows  = errors.New("corrupt subscription rows")
+	ErrStatusUnchanged         = errors.New("status unchanged")
+	ErrCorruptSubscriptionRows = errors.New("corrupt subscription rows")
+	ErrServerStatusNotFound    = errors.New("server status not found")
 )
 
 func NewDatabase(client dynamodbAPI, tableName string) *Database {
@@ -99,6 +100,30 @@ func (db *Database) SaveServerStatus(ctx context.Context, gameID, provider, regi
 	}
 
 	return nil
+}
+
+// GetServerStatus returns the current status row for a game server, or ErrServerStatusNotFound.
+func (db *Database) GetServerStatus(ctx context.Context, gameID, serverID string) (*models.GameServerStatus, error) {
+	getOut, err := db.client.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: aws.String(db.tableName),
+		Key: map[string]types.AttributeValue{
+			"gameId":   &types.AttributeValueMemberS{Value: gameID},
+			"serverId": &types.AttributeValueMemberS{Value: serverID},
+		},
+		ConsistentRead: aws.Bool(false),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("dynamodb get error for %s: %w", serverID, err)
+	}
+	if len(getOut.Item) == 0 {
+		return nil, ErrServerStatusNotFound
+	}
+
+	var status models.GameServerStatus
+	if err := attributevalue.UnmarshalMap(getOut.Item, &status); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal status for %s: %w", serverID, err)
+	}
+	return &status, nil
 }
 
 // AddSubscription adds a new Discord channel subscription for a specific server.

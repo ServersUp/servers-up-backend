@@ -145,6 +145,42 @@ func TestSaveServerStatus_writesWhenStatusChanges(t *testing.T) {
 	}
 }
 
+func TestGetServerStatus_found(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeDDB{
+		getOut: &dynamodb.GetItemOutput{
+			Item: map[string]types.AttributeValue{
+				"gameId":        &types.AttributeValueMemberS{Value: "wow"},
+				"serverId":      &types.AttributeValueMemberS{Value: "battlenet#us#57"},
+				"status":        &types.AttributeValueMemberS{Value: "UP"},
+				"lastUpdatedAt": &types.AttributeValueMemberN{Value: "1710000000"},
+			},
+		},
+	}
+	db := NewDatabase(f, "GameServerStatus")
+
+	got, err := db.GetServerStatus(context.Background(), "wow", "battlenet#us#57")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "UP" || got.GameID != "wow" {
+		t.Fatalf("unexpected status: %#v", got)
+	}
+}
+
+func TestGetServerStatus_notFound(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeDDB{}
+	db := NewDatabase(f, "GameServerStatus")
+
+	_, err := db.GetServerStatus(context.Background(), "wow", "battlenet#us#999")
+	if !errors.Is(err, ErrServerStatusNotFound) {
+		t.Fatalf("expected ErrServerStatusNotFound, got %v", err)
+	}
+}
+
 func TestListSubscriptionsByGuild_returnsRows(t *testing.T) {
 	t.Parallel()
 
