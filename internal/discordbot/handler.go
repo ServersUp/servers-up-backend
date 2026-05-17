@@ -170,7 +170,7 @@ func (h *Handler) HandleRequest(ctx context.Context, request events.LambdaFuncti
 			return logInteractionMarshalErr(ctx, resp, derr)
 		}
 
-		slog.Info("Handling Slash Command", "command", data.Name, "guild", interaction.GuildID)
+		slog.Info("Handling Slash Command", "command", data.Name, "interactionId", interaction.ID, "guild", interaction.GuildID)
 
 		switch data.Name {
 		case "subscribe":
