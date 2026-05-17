@@ -12,8 +12,13 @@ import (
 )
 
 func (h *Handler) handleUnsubscribe(ctx context.Context, interaction discord.Interaction, data discord.InteractionData) (events.LambdaFunctionURLResponse, error) {
+	if resp, ok := h.requireSubscriptionPermission(interaction); !ok {
+		return resp, nil
+	}
+
 	subscriptionID := strings.TrimSpace(h.getOption(data.Options, "subscription"))
 	slog.Info("unsubscribe request received",
+		"interactionId", interaction.ID,
 		"guildID", interaction.GuildID,
 		"channelID", interaction.ChannelID,
 		"subscriptionID", subscriptionID,
