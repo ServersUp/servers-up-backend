@@ -44,7 +44,7 @@ func (h *Handler) handleStatus(ctx context.Context, interaction discord.Interact
 	}
 
 	if h.statusStore == nil {
-		slog.Error("status store not configured (DDB_TABLE_NAME missing)")
+		slog.Error("status store not configured (DDB_GAME_SERVER_STATUS_TABLE_NAME missing)")
 		return h.discordResponse("System error: Status lookup is not configured right now. Please try again later.")
 	}
 

@@ -110,10 +110,10 @@ func NewHandler(ctx context.Context) *Handler {
 		statusLimiter:    newStatusRateLimiter(),
 		statusCache:      newStatusResultCache(),
 	}
-	if statusTable := os.Getenv("DDB_TABLE_NAME"); statusTable != "" {
+	if statusTable := os.Getenv("DDB_GAME_SERVER_STATUS_TABLE_NAME"); statusTable != "" {
 		h.statusStore = db.NewDatabase(ddbClient, statusTable)
 	} else {
-		slog.Warn("DDB_TABLE_NAME not set; /status will be unavailable")
+		slog.Warn("DDB_GAME_SERVER_STATUS_TABLE_NAME not set; /status will be unavailable")
 	}
 	return h
 }

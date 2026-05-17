@@ -105,7 +105,7 @@ An event-driven Lambda that periodically fetches the status of configured WoW re
 A Lambda Function URL-backed API that processes Discord interactions. Command logic lives in **`internal/discordbot`**; [`cmd/discord-bot-api`](cmd/discord-bot-api/) is a thin entrypoint.
 
 *   **Slash commands**: `/subscribe`, `/unsubscribe`, `/subscriptions`, `/games`, `/servers`, `/status`, `/help`.
-*   **Discovery & lookup**: `/games` and `/servers` list configured games and servers from S3 `server-mapping.json` (with autocomplete). `/status` reads the current **UP/DOWN** value from the status DynamoDB table (`DDB_TABLE_NAME`).
+*   **Discovery & lookup**: `/games` and `/servers` list configured games and servers from S3 `server-mapping.json` (with autocomplete). `/status` reads the current **UP/DOWN** value from the status DynamoDB table (`DDB_GAME_SERVER_STATUS_TABLE_NAME`).
 *   **Rate limiting**: `/status` is capped per user and per guild in-process (warm Lambda instances) to limit DynamoDB reads; over-limit replies are ephemeral.
 *   **Dynamic mapping**: Human names (e.g. `illidan`) map to provider/region/identifier via `server-mapping.json`.
 *   **Security**: Mandatory Ed25519 signature verification plus a maximum age on `X-Signature-Timestamp` to reject replayed requests.
