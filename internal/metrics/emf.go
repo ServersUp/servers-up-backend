@@ -6,6 +6,10 @@ import (
 	"time"
 )
 
+// Namespace is the CloudWatch metrics namespace for ServersUp Lambdas.
+// Keep custom metric count low (free tier ~10); do not add metrics without review.
+const Namespace = "ServersUp"
+
 // EmitCount writes an Embedded Metric Format (EMF) JSON line to stdout.
 // CloudWatch can extract metrics from these log lines without a separate agent.
 //
@@ -24,8 +28,6 @@ func emit(namespace, metricName, unit string, dimensions map[string]string, valu
 		dimKeys = append(dimKeys, k)
 	}
 
-	// EMF requires the root object include the dimension values and metric values
-	// alongside the reserved _aws block.
 	root := map[string]any{
 		"_aws": map[string]any{
 			"Timestamp": time.Now().UnixMilli(),
