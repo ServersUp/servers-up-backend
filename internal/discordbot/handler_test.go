@@ -113,7 +113,7 @@ func TestHandleRequest(t *testing.T) {
 	})
 
 	t.Run("Subscribe (Type 2)", func(t *testing.T) {
-		body := `{"type": 2, "guild_id": "guild-1", "channel_id": "chan-1", "data": {"name": "subscribe", "options": [{"name": "game", "value": "wow"}, {"name": "server", "value": "illidan"}, {"name": "role", "value": "123"}]}}`
+		body := `{"type": 2, "guild_id": "guild-1", "channel_id": "chan-1", "member": {"user": {"id": "user-1"}, "permissions": "16"}, "data": {"name": "subscribe", "options": [{"name": "game", "value": "wow"}, {"name": "server", "value": "illidan"}, {"name": "role", "value": "123"}]}}`
 		timestamp := discordSigTS(t)
 		sig := hex.EncodeToString(ed25519.Sign(priv, []byte(timestamp+body)))
 
@@ -150,7 +150,7 @@ func TestHandleRequest(t *testing.T) {
 	})
 
 	t.Run("Subscribe duplicate blocked (Type 2)", func(t *testing.T) {
-		body := `{"type": 2, "guild_id": "guild-1", "channel_id": "chan-1", "data": {"name": "subscribe", "options": [{"name": "game", "value": "wow"}, {"name": "server", "value": "illidan"}, {"name": "role", "value": "123"}]}}`
+		body := `{"type": 2, "guild_id": "guild-1", "channel_id": "chan-1", "member": {"user": {"id": "user-1"}, "permissions": "16"}, "data": {"name": "subscribe", "options": [{"name": "game", "value": "wow"}, {"name": "server", "value": "illidan"}, {"name": "role", "value": "123"}]}}`
 		timestamp := discordSigTS(t)
 		sig := hex.EncodeToString(ed25519.Sign(priv, []byte(timestamp+body)))
 
@@ -195,7 +195,7 @@ func TestHandleRequest(t *testing.T) {
 	})
 
 	t.Run("Unsubscribe removes selected subscription (Type 2)", func(t *testing.T) {
-		body := `{"type": 2, "guild_id": "guild-1", "channel_id": "chan-1", "data": {"name": "unsubscribe", "options": [{"name": "subscription", "value": "sub-illidan-1"}]}}`
+		body := `{"type": 2, "guild_id": "guild-1", "channel_id": "chan-1", "member": {"user": {"id": "user-1"}, "permissions": "16"}, "data": {"name": "unsubscribe", "options": [{"name": "subscription", "value": "sub-illidan-1"}]}}`
 		timestamp := discordSigTS(t)
 		sig := hex.EncodeToString(ed25519.Sign(priv, []byte(timestamp+body)))
 

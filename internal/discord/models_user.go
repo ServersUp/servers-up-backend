@@ -7,7 +7,8 @@ type InteractionUser struct {
 
 // InteractionMember is the guild member who invoked a command.
 type InteractionMember struct {
-	User InteractionUser `json:"user"`
+	User        InteractionUser `json:"user"`
+	Permissions string          `json:"permissions"`
 }
 
 // InvokerUserID returns the Discord user ID of whoever ran the interaction.
