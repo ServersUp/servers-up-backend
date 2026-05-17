@@ -36,7 +36,7 @@ func NewHandler(ctx context.Context) *Handler {
 
 	return &Handler{
 		configProvider: config.NewProvider(ssm.NewFromConfig(cfg), s3.NewFromConfig(cfg)),
-		database:       db.NewDatabase(dynamodb.NewFromConfig(cfg), os.Getenv("DDB_GAME_SERVER_STATUS_TABLE_NAME")),
+		database:       db.NewDatabase(dynamodb.NewFromConfig(cfg), os.Getenv("DDB_TABLE_NAME")),
 	}
 }
 
