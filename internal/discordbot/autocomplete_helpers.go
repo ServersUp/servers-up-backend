@@ -30,6 +30,24 @@ func optionStringValue(opt *discord.InteractionOption) string {
 	return ""
 }
 
+func autocompleteGames(mapping servermap.Mapping, partial string, max int) []discord.ApplicationCommandOptionChoice {
+	games := mapping.ListGames()
+	matches := filterSortedKeysPrefix(games, partial, max)
+	return keysToAutocompleteChoices(matches)
+}
+
+func autocompleteServers(mapping servermap.Mapping, gameNorm, partial string, max int) ([]discord.ApplicationCommandOptionChoice, error) {
+	if gameNorm == "" {
+		return nil, nil
+	}
+	servers, err := mapping.ListServers(gameNorm)
+	if err != nil {
+		return nil, err
+	}
+	matches := filterSortedKeysPrefix(servers, partial, max)
+	return keysToAutocompleteChoices(matches), nil
+}
+
 // filterSortedKeysPrefix keeps sort order of keys; matches normalized key prefix (case-insensitive via NormalizeKey).
 func filterSortedKeysPrefix(sortedKeys []string, partial string, max int) []string {
 	if max <= 0 {
