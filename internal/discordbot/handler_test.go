@@ -44,6 +44,15 @@ func (m *MockConfig) LoadJSONFromS3(ctx context.Context, bucket, key string, tar
 	return m.LoadFunc(ctx, bucket, key, target)
 }
 
+// MockStatusStore implements StatusStore for testing.
+type MockStatusStore struct {
+	GetFunc func(ctx context.Context, gameID, serverID string) (*models.GameServerStatus, error)
+}
+
+func (m *MockStatusStore) GetServerStatus(ctx context.Context, gameID, serverID string) (*models.GameServerStatus, error) {
+	return m.GetFunc(ctx, gameID, serverID)
+}
+
 func discordSigTS(t *testing.T) string {
 	t.Helper()
 	return strconv.FormatInt(time.Now().Unix(), 10)
@@ -408,6 +417,144 @@ func TestHandleRequest(t *testing.T) {
 		}
 		if strings.Contains(name, "sub-1") || strings.Contains(name, "<@&") || strings.Contains(name, "99") {
 			t.Fatalf("choice name should not expose subscription id or raw role snowflake, got %q", name)
+		}
+	})
+
+	t.Run("Servers short list (Type 2)", func(t *testing.T) {
+		body := `{"type": 2, "guild_id": "guild-1", "data": {"name": "servers", "options": [{"name": "game", "value": "wipe"}]}}`
+		timestamp := discordSigTS(t)
+		sig := hex.EncodeToString(ed25519.Sign(priv, []byte(timestamp+body)))
+
+		resp, _ := handler.HandleRequest(context.Background(), events.LambdaFunctionURLRequest{
+			Headers: map[string]string{
+				"x-signature-ed25519":   sig,
+				"x-signature-timestamp": timestamp,
+			},
+			Body: body,
+		})
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200, got %d", resp.StatusCode)
+		}
+		var discordResp discord.InteractionResponse
+		json.Unmarshal([]byte(resp.Body), &discordResp)
+		if !strings.Contains(discordResp.Data.Content, "`alpha`") {
+			t.Fatalf("expected wipe servers, got %q", discordResp.Data.Content)
+		}
+	})
+
+	t.Run("Status UP (Type 2)", func(t *testing.T) {
+		var getCalls int
+		statusHandler := &Handler{
+			database: mockDB,
+			statusStore: &MockStatusStore{
+				GetFunc: func(ctx context.Context, gameID, serverID string) (*models.GameServerStatus, error) {
+					getCalls++
+					if gameID != "wow" || serverID != "battlenet#us#57" {
+						return nil, fmt.Errorf("unexpected keys: %s %s", gameID, serverID)
+					}
+					return &models.GameServerStatus{
+						GameID:        "wow",
+						ServerID:      serverID,
+						Status:        "UP",
+						LastUpdatedAt: 1710000000,
+					}, nil
+				},
+			},
+			configProvider:   mockConfig,
+			discordPublicKey: publicKeyHex,
+			mappingCache:     servermap.NewCachedMapping(0),
+			statusLimiter:    newStatusRateLimiter(),
+			statusCache:      newStatusResultCache(),
+		}
+
+		statusBody := `{"type": 2, "guild_id": "guild-1", "member": {"user": {"id": "user-status-1"}}, "data": {"name": "status", "options": [{"name": "game", "value": "wow"}, {"name": "server", "value": "illidan"}]}}`
+		timestamp := discordSigTS(t)
+		sig := hex.EncodeToString(ed25519.Sign(priv, []byte(timestamp+statusBody)))
+
+		req := events.LambdaFunctionURLRequest{
+			Headers: map[string]string{
+				"x-signature-ed25519":   sig,
+				"x-signature-timestamp": timestamp,
+			},
+			Body: statusBody,
+		}
+
+		resp, _ := statusHandler.HandleRequest(context.Background(), req)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200, got %d", resp.StatusCode)
+		}
+		var discordResp discord.InteractionResponse
+		json.Unmarshal([]byte(resp.Body), &discordResp)
+		if !strings.Contains(discordResp.Data.Content, "**wow-illidan** is **UP**") {
+			t.Fatalf("expected status line, got %q", discordResp.Data.Content)
+		}
+		if getCalls != 1 {
+			t.Fatalf("expected 1 GetServerStatus call, got %d", getCalls)
+		}
+
+		// Second identical request should hit cache, not DDB.
+		timestamp2 := discordSigTS(t)
+		sig2 := hex.EncodeToString(ed25519.Sign(priv, []byte(timestamp2+statusBody)))
+		req.Headers["x-signature-timestamp"] = timestamp2
+		req.Headers["x-signature-ed25519"] = sig2
+		resp2, _ := statusHandler.HandleRequest(context.Background(), req)
+		if resp2.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200 on cached status, got %d", resp2.StatusCode)
+		}
+		if getCalls != 1 {
+			t.Fatalf("expected cache to prevent second DDB read, got %d calls", getCalls)
+		}
+	})
+
+	t.Run("Status rate limited (Type 2)", func(t *testing.T) {
+		var getCalls int
+		statusHandler := &Handler{
+			database: mockDB,
+			statusStore: &MockStatusStore{
+				GetFunc: func(ctx context.Context, gameID, serverID string) (*models.GameServerStatus, error) {
+					getCalls++
+					return &models.GameServerStatus{GameID: gameID, ServerID: serverID, Status: "UP", LastUpdatedAt: 1}, nil
+				},
+			},
+			configProvider:   mockConfig,
+			discordPublicKey: publicKeyHex,
+			mappingCache:     servermap.NewCachedMapping(0),
+			statusLimiter:    newStatusRateLimiter(),
+			statusCache:      newStatusResultCache(),
+		}
+
+		statusBody := `{"type": 2, "guild_id": "guild-1", "member": {"user": {"id": "user-rate-1"}}, "data": {"name": "status", "options": [{"name": "game", "value": "wow"}, {"name": "server", "value": "illidan"}]}}`
+		for i := 0; i < statusPerUserLimit; i++ {
+			ts := discordSigTS(t)
+			sig := hex.EncodeToString(ed25519.Sign(priv, []byte(ts+statusBody)))
+			_, _ = statusHandler.HandleRequest(context.Background(), events.LambdaFunctionURLRequest{
+				Headers: map[string]string{
+					"x-signature-ed25519":   sig,
+					"x-signature-timestamp": ts,
+				},
+				Body: statusBody,
+			})
+		}
+		before := getCalls
+		ts := discordSigTS(t)
+		sig := hex.EncodeToString(ed25519.Sign(priv, []byte(ts+statusBody)))
+		resp, _ := statusHandler.HandleRequest(context.Background(), events.LambdaFunctionURLRequest{
+			Headers: map[string]string{
+				"x-signature-ed25519":   sig,
+				"x-signature-timestamp": ts,
+			},
+			Body: statusBody,
+		})
+		var discordResp discord.InteractionResponse
+		json.Unmarshal([]byte(resp.Body), &discordResp)
+		if !strings.Contains(discordResp.Data.Content, "too quickly") {
+			t.Fatalf("expected rate limit message, got %q", discordResp.Data.Content)
+		}
+		if discordResp.Data.Flags != 64 {
+			t.Fatalf("expected ephemeral flags 64, got %d", discordResp.Data.Flags)
+		}
+		if getCalls != before {
+			t.Fatalf("rate limited request should not call GetServerStatus; calls %d -> %d", before, getCalls)
 		}
 	})
 

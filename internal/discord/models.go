@@ -38,6 +38,8 @@ type Interaction struct {
 	ChannelID     string          `json:"channel_id"`
 	Token         string          `json:"token"`
 	Version       int             `json:"version"`
+	Member        *InteractionMember `json:"member,omitempty"`
+	User          *InteractionUser   `json:"user,omitempty"`
 }
 
 // InteractionData represents the command-specific data in an interaction.

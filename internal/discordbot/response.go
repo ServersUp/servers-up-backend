@@ -39,6 +39,16 @@ func (h *Handler) discordResponse(content string) (events.LambdaFunctionURLRespo
 	})
 }
 
+func (h *Handler) discordResponseEphemeral(content string) (events.LambdaFunctionURLResponse, error) {
+	return h.jsonResponse(http.StatusOK, discord.InteractionResponse{
+		Type: discord.InteractionResponseTypeChannelMessageWithSource,
+		Data: &discord.InteractionResponseData{
+			Content: content,
+			Flags:   64, // ephemeral
+		},
+	})
+}
+
 func (h *Handler) jsonResponse(statusCode int, body any) (events.LambdaFunctionURLResponse, error) {
 	jsonBytes, err := json.Marshal(body)
 	if err != nil {

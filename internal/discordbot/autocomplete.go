@@ -47,6 +47,46 @@ func (h *Handler) handleAutocomplete(ctx context.Context, interaction discord.In
 		default:
 			return h.autocompleteResponse(nil)
 		}
+	case "servers":
+		if focused.Name != "game" {
+			return h.autocompleteResponse(nil)
+		}
+		mapping, err := h.loadServerMapping(ctx)
+		if err != nil {
+			slog.Error("autocomplete: failed to load server mapping", "error", err)
+			return h.autocompleteResponse(nil)
+		}
+		partial := optionStringValue(focused)
+		games := mapping.ListGames()
+		matches := filterSortedKeysPrefix(games, partial, maxChoices)
+		return h.autocompleteResponse(keysToAutocompleteChoices(matches))
+	case "status":
+		mapping, err := h.loadServerMapping(ctx)
+		if err != nil {
+			slog.Error("autocomplete: failed to load server mapping", "error", err)
+			return h.autocompleteResponse(nil)
+		}
+		switch focused.Name {
+		case "game":
+			partial := optionStringValue(focused)
+			games := mapping.ListGames()
+			matches := filterSortedKeysPrefix(games, partial, maxChoices)
+			return h.autocompleteResponse(keysToAutocompleteChoices(matches))
+		case "server":
+			gameNorm := servermap.NormalizeKey(h.getOption(data.Options, "game"))
+			if gameNorm == "" {
+				return h.autocompleteResponse(nil)
+			}
+			servers, err := mapping.ListServers(gameNorm)
+			if err != nil {
+				return h.autocompleteResponse(nil)
+			}
+			partial := optionStringValue(focused)
+			matches := filterSortedKeysPrefix(servers, partial, maxChoices)
+			return h.autocompleteResponse(keysToAutocompleteChoices(matches))
+		default:
+			return h.autocompleteResponse(nil)
+		}
 	case "unsubscribe":
 		if focused.Name != "subscription" {
 			return h.autocompleteResponse(nil)

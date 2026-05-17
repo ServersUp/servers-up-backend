@@ -30,6 +30,7 @@ graph TD
   User -->|SlashCommands| DiscordAPI
   DiscordAPI -->|SignedWebhook| BotApi
   BotApi --> SubsDdb
+  BotApi --> StatusDdb
   BotApi --> ConfigS3
 
   Scheduler --> Poller
@@ -48,7 +49,7 @@ graph TD
 *   **Language**: Go 1.25+
 *   **Cloud Infrastructure**: AWS Lambda (Function URL & Event-driven)
 *   **Storage**: DynamoDB (Status & Subscription storage), S3 (Dynamic configuration)
-*   **Security**: AWS OIDC (Deployment), AWS SSM Parameter Store (Secrets), Ed25519 (Discord Signature Verification)
+*   **Security**: AWS OIDC (Deployment), AWS SSM Parameter Store (Secrets), Ed25519 (Discord signature verification with timestamp replay protection)
 *   **CI/CD**: GitHub Actions (Dynamic Matrix Deployment)
 
 ## Design choices (cost and efficiency)
@@ -76,15 +77,19 @@ Guild notifications can concentrate heavily on a small number of popular servers
 
 ```text
 ├── cmd/
-│   ├── bnet-polling-function/   # Lambda: Periodically polls Blizzard API for realm status
-│   ├── discord-bot-api/         # Lambda: Handles Discord interactions (subscribe/unsubscribe/subscriptions/help)
-│   └── config-reader/           # Utility: Generates deployment matrices from YAML configs
+│   ├── bnet-polling-function/              # Lambda: polls Blizzard API for realm status
+│   ├── discord-bot-api/                    # Lambda entrypoint for Discord interactions
+│   ├── discord-guild-notify-job-creator/   # Lambda: DDB stream → SQS notify jobs
+│   ├── discord-guild-notify-lambda/        # Lambda: SQS → Discord channel messages
+│   └── config-reader/                      # CI utility: deployment matrices from YAML
 ├── internal/
 │   ├── bnet/                    # Battle.net API client and models
-│   ├── config/                  # AWS Config Provider (S3/SSM)
-│   ├── db/                      # Generic DynamoDB access layer
-│   ├── discord/                 # Discord interaction models and security logic
-│   └── models/                  # Shared universal data models
+│   ├── config/                  # AWS config provider (S3/SSM)
+│   ├── db/                      # DynamoDB access (status + subscriptions)
+│   ├── discord/                 # Interaction types and signature verification
+│   ├── discordbot/              # Slash command handlers (subscribe, status, etc.)
+│   ├── servermap/               # server-mapping.json loader and lookup
+│   └── models/                  # Shared data models
 └── .github/workflows/           # Unified dynamic deployment pipeline
 ```
 
@@ -97,10 +102,16 @@ An event-driven Lambda that periodically fetches the status of configured WoW re
 *   Structured logging via `slog` for CloudWatch analysis.
 
 ### 2. Discord Bot API
-A Lambda Function URL-backed API that processes Discord Interactions.
-*   **Slash commands**: `/subscribe`, `/unsubscribe`, `/subscriptions`, `/games`, `/help`.
-*   **Dynamic Mapping**: Uses an S3-stored JSON file to translate human names (e.g., "Illidan") to technical IDs.
-*   **Security**: Implements mandatory Ed25519 signature verification to ensure requests originate from Discord.
+A Lambda Function URL-backed API that processes Discord interactions. Command logic lives in **`internal/discordbot`**; [`cmd/discord-bot-api`](cmd/discord-bot-api/) is a thin entrypoint.
+
+*   **Slash commands**: `/subscribe`, `/unsubscribe`, `/subscriptions`, `/games`, `/servers`, `/status`, `/help`.
+*   **Discovery & lookup**: `/games` and `/servers` list configured games and servers from S3 `server-mapping.json` (with autocomplete). `/status` reads the current **UP/DOWN** value from the status DynamoDB table (`DDB_GAME_SERVER_STATUS_TABLE_NAME`).
+*   **Rate limiting**: `/status` is capped per user and per guild in-process (warm Lambda instances) to limit DynamoDB reads; over-limit replies are ephemeral.
+*   **Dynamic mapping**: Human names (e.g. `illidan`) map to provider/region/identifier via `server-mapping.json`.
+*   **Security**: Mandatory Ed25519 signature verification plus a maximum age on `X-Signature-Timestamp` to reject replayed requests.
+
+### 3. Discord guild notify pipeline
+When status changes in DynamoDB, a stream-triggered job creator enqueues per-subscription work to SQS; a notifier Lambda posts to subscribed Discord channels (optional role mention).
 
 ## ⚙️ CI/CD Pipeline
 
