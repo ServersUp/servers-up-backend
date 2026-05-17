@@ -13,6 +13,7 @@ import (
 
 	"github.com/ServersUp/servers-up-backend/internal/config"
 	"github.com/ServersUp/servers-up-backend/internal/logsetup"
+	"github.com/ServersUp/servers-up-backend/internal/metrics"
 	"github.com/ServersUp/servers-up-backend/internal/models"
 	"github.com/ServersUp/servers-up-backend/internal/servermap"
 	"github.com/aws/aws-lambda-go/events"
@@ -87,7 +88,7 @@ func (h *Handler) HandleRequest(ctx context.Context, event events.SQSEvent) (eve
 			continue
 		}
 
-		slog.Error("failed to process SQS record", "error", err, "messageId", rec.MessageId)
+		slog.Error("failed to process SQS record", "error", err, "messageId", rec.MessageId, "eventSource", rec.EventSource)
 		resp.BatchItemFailures = append(resp.BatchItemFailures, events.SQSBatchItemFailure{
 			ItemIdentifier: rec.MessageId,
 		})
@@ -119,6 +120,14 @@ func (h *Handler) processRecord(ctx context.Context, rec events.SQSMessage) erro
 	)
 
 	if err := h.discord.SendChannelMessage(ctx, job.ChannelID, content, job.RoleID); err != nil {
+		metrics.EmitCount(metrics.Namespace, "NotifySendError", nil, 1)
+		slog.Error("discord notify send failed",
+			"error", err,
+			"messageId", rec.MessageId,
+			"serverId", job.ServerID,
+			"guildId", job.GuildID,
+			"channelId", job.ChannelID,
+		)
 		return fmt.Errorf("send discord message: %w", err)
 	}
 
