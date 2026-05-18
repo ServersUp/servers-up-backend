@@ -4,6 +4,11 @@ All notable user-facing changes to ServersUp Backend will be documented in this 
 
 This changelog is intended to be readable for end users and can be published directly to the project website.
 
+## v1.0.3 — 2026-05-15
+
+### Changed
+- **`/subscribe`** and **`/unsubscribe`** — only members with **Manage Channels** or **Administrator** can add or remove subscriptions (ephemeral message if denied).
+
 ## v1.0.2 — 2026-05-15
 
 ### Added
