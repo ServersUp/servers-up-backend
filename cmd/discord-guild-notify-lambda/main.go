@@ -9,10 +9,14 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/ServersUp/servers-up-backend/internal/config"
+	"github.com/ServersUp/servers-up-backend/internal/discord"
 	"github.com/ServersUp/servers-up-backend/internal/logsetup"
+	"github.com/ServersUp/servers-up-backend/internal/metrics"
 	"github.com/ServersUp/servers-up-backend/internal/models"
 	"github.com/ServersUp/servers-up-backend/internal/servermap"
 	"github.com/aws/aws-lambda-go/events"
@@ -27,10 +31,10 @@ type DiscordClient interface {
 }
 
 type Handler struct {
-	discord         DiscordClient
-	configProvider  *config.Provider
+	discord          DiscordClient
+	configProvider   *config.Provider
 	mappingCache     *servermap.CachedMapping
-	configBucket    string
+	configBucket     string
 	serverMappingKey string
 }
 
@@ -39,6 +43,17 @@ func NewHandler() *Handler {
 	if tokenPath == "" {
 		slog.Error("missing required env DISCORD_BOT_TOKEN_PATH")
 		os.Exit(1)
+	}
+
+	dlqURL := os.Getenv("GUILD_NOTIFY_JOBS_DLQ_URL")
+	if dlqURL == "" {
+		slog.Error("missing required env GUILD_NOTIFY_JOBS_DLQ_URL")
+		os.Exit(1)
+	}
+	if name := sqsQueueNameFromURL(dlqURL); name != "" {
+		slog.Info("guild notify jobs DLQ configured", "queueName", name)
+	} else {
+		slog.Info("guild notify jobs DLQ configured")
 	}
 
 	cfg, err := awsconfig.LoadDefaultConfig(context.Background())
@@ -66,16 +81,32 @@ func NewHandler() *Handler {
 	}
 
 	return &Handler{
-		discord:        &discordHTTPClient{
+		discord: &discordHTTPClient{
 			httpClient: &http.Client{Timeout: 10 * time.Second},
 			baseURL:    "https://discord.com/api/v10",
 			botToken:   token,
 		},
 		configProvider:   provider,
 		mappingCache:     servermap.NewCachedMapping(servermap.CacheTTLFromEnv()),
-		configBucket:    bucket,
+		configBucket:     bucket,
 		serverMappingKey: key,
 	}
+}
+
+func sqsQueueNameFromURL(queueURL string) string {
+	if i := strings.LastIndex(queueURL, "/"); i >= 0 && i < len(queueURL)-1 {
+		return queueURL[i+1:]
+	}
+	return ""
+}
+
+func emitNotifySendError(statusCode int) {
+	if statusCode < 400 || statusCode >= 600 {
+		return
+	}
+	metrics.EmitCount(metrics.Namespace, "NotifySendError", map[string]string{
+		"discordStatus": strconv.Itoa(statusCode),
+	}, 1)
 }
 
 func (h *Handler) HandleRequest(ctx context.Context, event events.SQSEvent) (events.SQSEventResponse, error) {
@@ -99,11 +130,23 @@ func (h *Handler) HandleRequest(ctx context.Context, event events.SQSEvent) (eve
 func (h *Handler) processRecord(ctx context.Context, rec events.SQSMessage) error {
 	var job models.GuildNotifyJob
 	if err := json.Unmarshal([]byte(rec.Body), &job); err != nil {
-		return fmt.Errorf("unmarshal guild notify job: %w", err)
+		slog.Warn("invalid guild notify job payload; ack-deleting",
+			"error", err,
+			"messageId", rec.MessageId,
+			"bodySnippet", bodySnippet(rec.Body, 256),
+		)
+		return nil
 	}
 
 	if job.ServerID == "" || job.Status == "" || job.ChannelID == "" {
-		return fmt.Errorf("invalid guild notify job: missing required fields (serverId/status/channelId)")
+		slog.Warn("guild notify job missing required fields; ack-deleting",
+			"messageId", rec.MessageId,
+			"serverID", job.ServerID,
+			"status", job.Status,
+			"channelID", job.ChannelID,
+			"guildID", job.GuildID,
+		)
+		return nil
 	}
 
 	serverLabel := h.humanServerName(ctx, job.ServerID)
@@ -119,7 +162,7 @@ func (h *Handler) processRecord(ctx context.Context, rec events.SQSMessage) erro
 	)
 
 	if err := h.discord.SendChannelMessage(ctx, job.ChannelID, content, job.RoleID); err != nil {
-		return fmt.Errorf("send discord message: %w", err)
+		return h.handleDiscordSendError(job, rec.MessageId, err)
 	}
 
 	slog.Info("sent discord notification",
@@ -131,6 +174,51 @@ func (h *Handler) processRecord(ctx context.Context, rec events.SQSMessage) erro
 	)
 
 	return nil
+}
+
+func (h *Handler) handleDiscordSendError(job models.GuildNotifyJob, messageID string, err error) error {
+	if apiErr, ok := discord.AsAPIError(err); ok {
+		emitNotifySendError(apiErr.StatusCode)
+		if apiErr.Permanent() {
+			slog.Warn("permanent discord send failure; ack-deleting",
+				"error", err,
+				"discordStatus", apiErr.StatusCode,
+				"serverID", job.ServerID,
+				"status", job.Status,
+				"guildID", job.GuildID,
+				"channelID", job.ChannelID,
+				"messageId", messageID,
+			)
+			return nil
+		}
+		if apiErr.Retryable() {
+			slog.Error("retryable discord send failure",
+				"error", err,
+				"discordStatus", apiErr.StatusCode,
+				"serverID", job.ServerID,
+				"guildID", job.GuildID,
+				"channelID", job.ChannelID,
+				"messageId", messageID,
+			)
+			return fmt.Errorf("send discord message: %w", err)
+		}
+	}
+
+	slog.Error("discord send failed",
+		"error", err,
+		"serverID", job.ServerID,
+		"guildID", job.GuildID,
+		"channelID", job.ChannelID,
+		"messageId", messageID,
+	)
+	return fmt.Errorf("send discord message: %w", err)
+}
+
+func bodySnippet(body string, maxLen int) string {
+	if len(body) <= maxLen {
+		return body
+	}
+	return body[:maxLen] + "…"
 }
 
 func formatDiscordContent(job models.GuildNotifyJob, serverLabel string) string {
@@ -173,7 +261,7 @@ type discordHTTPClient struct {
 }
 
 type discordMessageRequest struct {
-	Content         string               `json:"content"`
+	Content         string                 `json:"content"`
 	AllowedMentions discordAllowedMentions `json:"allowed_mentions,omitempty"`
 }
 
@@ -218,7 +306,7 @@ func (c *discordHTTPClient) SendChannelMessage(ctx context.Context, channelID, c
 	}
 
 	body, _ := io.ReadAll(io.LimitReader(res.Body, 8*1024))
-	return fmt.Errorf("discord non-2xx response: %d body=%q", res.StatusCode, string(body))
+	return &discord.APIError{StatusCode: res.StatusCode, Body: string(body)}
 }
 
 func main() {
