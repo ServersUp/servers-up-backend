@@ -28,22 +28,14 @@ func (h *Handler) handleAutocomplete(ctx context.Context, interaction discord.In
 		}
 		switch focused.Name {
 		case "game":
-			partial := optionStringValue(focused)
-			games := mapping.ListGames()
-			matches := filterSortedKeysPrefix(games, partial, maxChoices)
-			return h.autocompleteResponse(keysToAutocompleteChoices(matches))
+			return h.autocompleteResponse(autocompleteGames(mapping, optionStringValue(focused), maxChoices))
 		case "server":
 			gameNorm := servermap.NormalizeKey(h.getOption(data.Options, "game"))
-			if gameNorm == "" {
-				return h.autocompleteResponse(nil)
-			}
-			servers, err := mapping.ListServers(gameNorm)
+			choices, err := autocompleteServers(mapping, gameNorm, optionStringValue(focused), maxChoices)
 			if err != nil {
 				return h.autocompleteResponse(nil)
 			}
-			partial := optionStringValue(focused)
-			matches := filterSortedKeysPrefix(servers, partial, maxChoices)
-			return h.autocompleteResponse(keysToAutocompleteChoices(matches))
+			return h.autocompleteResponse(choices)
 		default:
 			return h.autocompleteResponse(nil)
 		}
@@ -56,10 +48,7 @@ func (h *Handler) handleAutocomplete(ctx context.Context, interaction discord.In
 			slog.Error("autocomplete: failed to load server mapping", "error", err)
 			return h.autocompleteResponse(nil)
 		}
-		partial := optionStringValue(focused)
-		games := mapping.ListGames()
-		matches := filterSortedKeysPrefix(games, partial, maxChoices)
-		return h.autocompleteResponse(keysToAutocompleteChoices(matches))
+		return h.autocompleteResponse(autocompleteGames(mapping, optionStringValue(focused), maxChoices))
 	case "status":
 		mapping, err := h.loadServerMapping(ctx)
 		if err != nil {
@@ -68,22 +57,14 @@ func (h *Handler) handleAutocomplete(ctx context.Context, interaction discord.In
 		}
 		switch focused.Name {
 		case "game":
-			partial := optionStringValue(focused)
-			games := mapping.ListGames()
-			matches := filterSortedKeysPrefix(games, partial, maxChoices)
-			return h.autocompleteResponse(keysToAutocompleteChoices(matches))
+			return h.autocompleteResponse(autocompleteGames(mapping, optionStringValue(focused), maxChoices))
 		case "server":
 			gameNorm := servermap.NormalizeKey(h.getOption(data.Options, "game"))
-			if gameNorm == "" {
-				return h.autocompleteResponse(nil)
-			}
-			servers, err := mapping.ListServers(gameNorm)
+			choices, err := autocompleteServers(mapping, gameNorm, optionStringValue(focused), maxChoices)
 			if err != nil {
 				return h.autocompleteResponse(nil)
 			}
-			partial := optionStringValue(focused)
-			matches := filterSortedKeysPrefix(servers, partial, maxChoices)
-			return h.autocompleteResponse(keysToAutocompleteChoices(matches))
+			return h.autocompleteResponse(choices)
 		default:
 			return h.autocompleteResponse(nil)
 		}

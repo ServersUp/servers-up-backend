@@ -6,6 +6,7 @@ import (
 	"log/slog"
 
 	"github.com/ServersUp/servers-up-backend/internal/discord"
+	"github.com/ServersUp/servers-up-backend/internal/metrics"
 	"github.com/ServersUp/servers-up-backend/internal/models"
 	"github.com/ServersUp/servers-up-backend/internal/serverid"
 	"github.com/ServersUp/servers-up-backend/internal/servermap"
@@ -14,6 +15,10 @@ import (
 )
 
 func (h *Handler) handleSubscribe(ctx context.Context, interaction discord.Interaction, data discord.InteractionData) (events.LambdaFunctionURLResponse, error) {
+	if resp, ok := h.requireSubscriptionPermission(interaction); !ok {
+		return resp, nil
+	}
+
 	rawGame := h.getOption(data.Options, "game")
 	rawServer := h.getOption(data.Options, "server")
 	roleID := h.getOption(data.Options, "role")
@@ -22,6 +27,7 @@ func (h *Handler) handleSubscribe(ctx context.Context, interaction discord.Inter
 	serverName := servermap.NormalizeKey(rawServer)
 
 	slog.Info("subscribe request received",
+		"interactionId", interaction.ID,
 		"guildID", interaction.GuildID,
 		"channelID", interaction.ChannelID,
 		"roleID", roleID,
@@ -118,6 +124,7 @@ func (h *Handler) handleSubscribe(ctx context.Context, interaction discord.Inter
 	}
 
 	slog.Info("subscription created",
+		"interactionId", interaction.ID,
 		"guildID", interaction.GuildID,
 		"channelID", interaction.ChannelID,
 		"roleID", roleID,
@@ -125,6 +132,8 @@ func (h *Handler) handleSubscribe(ctx context.Context, interaction discord.Inter
 		"serverKey", serverKey,
 		"technicalServerID", technicalID,
 	)
+
+	metrics.EmitCount(metrics.Namespace, "SubscriptionWrite", map[string]string{"command": "subscribe"}, 1)
 
 	chLabel := h.channelPretty(ctx, interaction.GuildID, interaction.ChannelID)
 	humanKey := fmt.Sprintf("%s-%s", gameID, serverKey)

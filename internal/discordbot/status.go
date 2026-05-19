@@ -10,6 +10,7 @@ import (
 
 	"github.com/ServersUp/servers-up-backend/internal/db"
 	"github.com/ServersUp/servers-up-backend/internal/discord"
+	"github.com/ServersUp/servers-up-backend/internal/metrics"
 	"github.com/ServersUp/servers-up-backend/internal/models"
 	"github.com/ServersUp/servers-up-backend/internal/serverid"
 	"github.com/ServersUp/servers-up-backend/internal/servermap"
@@ -28,6 +29,7 @@ func (h *Handler) handleStatus(ctx context.Context, interaction discord.Interact
 	serverName := servermap.NormalizeKey(rawServer)
 
 	slog.Info("status requested",
+		"interactionId", interaction.ID,
 		"rawGame", rawGame,
 		"rawServer", rawServer,
 		"gameName", gameName,
@@ -96,6 +98,8 @@ func (h *Handler) handleStatus(ctx context.Context, interaction discord.Interact
 			h.statusCache.Set(gameID, technicalID, row)
 		}
 	}
+
+	metrics.EmitCount(metrics.Namespace, "StatusLookup", map[string]string{"gameId": gameID}, 1)
 
 	human := fmt.Sprintf("%s-%s", gameID, serverKey)
 	updated := formatStatusLastUpdated(row.LastUpdatedAt)

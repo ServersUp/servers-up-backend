@@ -153,11 +153,12 @@ func (h *Handler) processRecord(ctx context.Context, rec *events.DynamoDBEventRe
 			}
 
 			slog.Info("enqueued guild notify job",
-				"serverID", serverID,
+				"serverId", serverID,
 				"status", newStatus,
-				"guildID", sub.GuildID,
-				"channelID", sub.ChannelID,
+				"guildId", sub.GuildID,
+				"channelId", sub.ChannelID,
 				"hasRole", job.RoleID != "",
+				"eventID", rec.EventID,
 			)
 			return nil
 		})

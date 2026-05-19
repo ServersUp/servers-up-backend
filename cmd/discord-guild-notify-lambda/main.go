@@ -118,7 +118,7 @@ func (h *Handler) HandleRequest(ctx context.Context, event events.SQSEvent) (eve
 			continue
 		}
 
-		slog.Error("failed to process SQS record", "error", err, "messageId", rec.MessageId)
+		slog.Error("failed to process SQS record", "error", err, "messageId", rec.MessageId, "eventSource", rec.EventSource)
 		resp.BatchItemFailures = append(resp.BatchItemFailures, events.SQSBatchItemFailure{
 			ItemIdentifier: rec.MessageId,
 		})
