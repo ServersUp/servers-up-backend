@@ -57,8 +57,6 @@ Users run slash commands in Discord. Discord calls the bot API (Lambda behind a 
 **Status polling**  
 On a schedule (EventBridge), one or more **poller** Lambdas check whether game servers are up or down. Each poller is built for a particular way of getting status—REST API, ping, scraping, or similar—without tying the overall design to one game or vendor. Results are stored in a shared **status** table in DynamoDB. Only rows that actually change are interesting downstream; unchanged polls do not spam the notification path.
 
-Today’s deployment includes a Battle.net poller (diagram: `BNetPollingLambda` → external API); additional pollers would follow the same pattern: write status, read poller-specific config from S3.
-
 **Notifications**  
 When a status row changes, **DynamoDB Streams** emits an event. A **job-creator** Lambda handles that stream: for each Discord subscription on that server, it enqueues a small job on **SQS**. **Notifier** Lambdas consume those jobs in batches and post to the right channel (and optional role mention).
 
