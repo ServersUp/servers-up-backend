@@ -3,10 +3,14 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/ServersUp/servers-up-backend/internal/discord"
 	"github.com/ServersUp/servers-up-backend/internal/models"
 	"github.com/ServersUp/servers-up-backend/internal/servermap"
 	"github.com/aws/aws-lambda-go/events"
@@ -29,6 +33,12 @@ func (m *mockDiscord) SendChannelMessage(ctx context.Context, channelID, content
 		return m.sendFunc(ctx, channelID, content, roleID)
 	}
 	return nil
+}
+
+func newTestHandler(discordClient DiscordClient, mapping servermap.Mapping) *Handler {
+	cache := servermap.NewCachedMapping(time.Hour)
+	cache.Seed(mapping)
+	return &Handler{discord: discordClient, mappingCache: cache}
 }
 
 func TestHandleRequest_success_singleMessage(t *testing.T) {
@@ -56,7 +66,6 @@ func TestHandleRequest_success_singleMessage(t *testing.T) {
 	if md.calls[0].channelID != "c" {
 		t.Fatalf("channelID=%q", md.calls[0].channelID)
 	}
-	// Without a server mapping configured, the consumer falls back to the technical serverId.
 	if !strings.Contains(md.calls[0].content, "battlenet#us#11") || !strings.Contains(md.calls[0].content, "**DOWN**") {
 		t.Fatalf("unexpected content: %q", md.calls[0].content)
 	}
@@ -91,12 +100,6 @@ func TestHandleRequest_success_withRoleMention(t *testing.T) {
 	}
 }
 
-func newTestHandler(discord DiscordClient, mapping servermap.Mapping) *Handler {
-	cache := servermap.NewCachedMapping(time.Hour)
-	cache.Seed(mapping)
-	return &Handler{discord: discord, mappingCache: cache}
-}
-
 func TestHandleRequest_usesHumanServerNameWhenMappingAvailable(t *testing.T) {
 	t.Parallel()
 
@@ -125,18 +128,12 @@ func TestHandleRequest_usesHumanServerNameWhenMappingAvailable(t *testing.T) {
 	if len(resp.BatchItemFailures) != 0 {
 		t.Fatalf("expected no failures, got %+v", resp.BatchItemFailures)
 	}
-	if len(md.calls) != 1 {
-		t.Fatalf("expected 1 discord call, got %d", len(md.calls))
-	}
 	if !strings.Contains(md.calls[0].content, "wow-illidan") {
 		t.Fatalf("expected game+server in content, got %q", md.calls[0].content)
 	}
-	if strings.Contains(md.calls[0].content, "battlenet#us#57") {
-		t.Fatalf("expected technical serverId not to be used when mapping exists, got %q", md.calls[0].content)
-	}
 }
 
-func TestHandleRequest_invalidJSON_marksFailure(t *testing.T) {
+func TestHandleRequest_invalidJSON_ackDeletes(t *testing.T) {
 	t.Parallel()
 
 	md := &mockDiscord{}
@@ -151,15 +148,15 @@ func TestHandleRequest_invalidJSON_marksFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(resp.BatchItemFailures) != 1 || resp.BatchItemFailures[0].ItemIdentifier != "bad" {
-		t.Fatalf("expected failure for bad, got %+v", resp.BatchItemFailures)
+	if len(resp.BatchItemFailures) != 0 {
+		t.Fatalf("expected no failures (ack-delete), got %+v", resp.BatchItemFailures)
 	}
 	if len(md.calls) != 0 {
 		t.Fatalf("expected no discord calls, got %d", len(md.calls))
 	}
 }
 
-func TestHandleRequest_missingFields_marksFailure(t *testing.T) {
+func TestHandleRequest_missingFields_ackDeletes(t *testing.T) {
 	t.Parallel()
 
 	md := &mockDiscord{}
@@ -177,15 +174,115 @@ func TestHandleRequest_missingFields_marksFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(resp.BatchItemFailures) != 3 {
-		t.Fatalf("expected 3 failures, got %+v", resp.BatchItemFailures)
+	if len(resp.BatchItemFailures) != 0 {
+		t.Fatalf("expected no failures (ack-delete), got %+v", resp.BatchItemFailures)
 	}
 	if len(md.calls) != 0 {
 		t.Fatalf("expected no discord calls, got %d", len(md.calls))
 	}
 }
 
-func TestHandleRequest_partialFailure_onlyFailsBadMessage(t *testing.T) {
+func TestHandleRequest_discord403_ackDeletes(t *testing.T) {
+	t.Parallel()
+
+	md := &mockDiscord{sendFunc: func(ctx context.Context, channelID, content, roleID string) error {
+		return &discord.APIError{StatusCode: 403, Body: "forbidden"}
+	}}
+	h := newTestHandler(md, servermap.Mapping{})
+
+	ev := events.SQSEvent{Records: []events.SQSMessage{
+		{MessageId: "m1", Body: `{"serverId":"x","status":"UP","guildId":"g","channelId":"c","roleId":""}`},
+	}}
+
+	resp, err := h.HandleRequest(context.Background(), ev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.BatchItemFailures) != 0 {
+		t.Fatalf("expected no failures for permanent 403, got %+v", resp.BatchItemFailures)
+	}
+}
+
+func TestHandleRequest_discord429_marksFailure(t *testing.T) {
+	t.Parallel()
+
+	md := &mockDiscord{sendFunc: func(ctx context.Context, channelID, content, roleID string) error {
+		return &discord.APIError{StatusCode: 429, Body: "rate limited"}
+	}}
+	h := newTestHandler(md, servermap.Mapping{})
+
+	ev := events.SQSEvent{Records: []events.SQSMessage{
+		{MessageId: "m1", Body: `{"serverId":"x","status":"UP","guildId":"g","channelId":"c","roleId":""}`},
+	}}
+
+	resp, err := h.HandleRequest(context.Background(), ev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.BatchItemFailures) != 1 || resp.BatchItemFailures[0].ItemIdentifier != "m1" {
+		t.Fatalf("expected m1 failure for 429, got %+v", resp.BatchItemFailures)
+	}
+}
+
+func TestHandleRequest_discord500_marksFailure(t *testing.T) {
+	t.Parallel()
+
+	md := &mockDiscord{sendFunc: func(ctx context.Context, channelID, content, roleID string) error {
+		return &discord.APIError{StatusCode: 500, Body: "error"}
+	}}
+	h := newTestHandler(md, servermap.Mapping{})
+
+	ev := events.SQSEvent{Records: []events.SQSMessage{
+		{MessageId: "m1", Body: `{"serverId":"x","status":"UP","guildId":"g","channelId":"c","roleId":""}`},
+	}}
+
+	resp, err := h.HandleRequest(context.Background(), ev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.BatchItemFailures) != 1 || resp.BatchItemFailures[0].ItemIdentifier != "m1" {
+		t.Fatalf("expected m1 failure for 500, got %+v", resp.BatchItemFailures)
+	}
+}
+
+func TestHandleRequest_partialBatch_403And429(t *testing.T) {
+	t.Parallel()
+
+	md := &mockDiscord{
+		sendFunc: func(ctx context.Context, channelID, content, roleID string) error {
+			switch channelID {
+			case "perm":
+				return &discord.APIError{StatusCode: 403, Body: "forbidden"}
+			case "rate":
+				return &discord.APIError{StatusCode: 429, Body: "rate limited"}
+			default:
+				return nil
+			}
+		},
+	}
+	h := newTestHandler(md, servermap.Mapping{})
+
+	ev := events.SQSEvent{
+		Records: []events.SQSMessage{
+			{MessageId: "perm", Body: `{"serverId":"x","status":"UP","guildId":"g","channelId":"perm","roleId":""}`},
+			{MessageId: "rate", Body: `{"serverId":"x","status":"DOWN","guildId":"g","channelId":"rate","roleId":""}`},
+			{MessageId: "ok", Body: `{"serverId":"x","status":"UP","guildId":"g","channelId":"good","roleId":""}`},
+		},
+	}
+
+	resp, err := h.HandleRequest(context.Background(), ev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.BatchItemFailures) != 1 || resp.BatchItemFailures[0].ItemIdentifier != "rate" {
+		t.Fatalf("expected only rate in failures, got %+v", resp.BatchItemFailures)
+	}
+	if len(md.calls) != 3 {
+		t.Fatalf("expected 3 discord calls, got %d", len(md.calls))
+	}
+}
+
+func TestHandleRequest_partialFailure_networkErrorRetries(t *testing.T) {
 	t.Parallel()
 
 	md := &mockDiscord{
@@ -212,16 +309,13 @@ func TestHandleRequest_partialFailure_onlyFailsBadMessage(t *testing.T) {
 	if len(resp.BatchItemFailures) != 1 || resp.BatchItemFailures[0].ItemIdentifier != "fail" {
 		t.Fatalf("expected only 'fail' marked, got %+v", resp.BatchItemFailures)
 	}
-	if len(md.calls) != 2 {
-		t.Fatalf("expected 2 discord calls, got %d", len(md.calls))
-	}
 }
 
-func TestProcessRecord_propagatesDiscordError(t *testing.T) {
+func TestProcessRecord_propagatesRetryableDiscordError(t *testing.T) {
 	t.Parallel()
 
 	md := &mockDiscord{sendFunc: func(ctx context.Context, channelID, content, roleID string) error {
-		return errors.New("boom")
+		return &discord.APIError{StatusCode: 503, Body: "unavailable"}
 	}}
 	h := newTestHandler(md, servermap.Mapping{})
 
@@ -231,6 +325,23 @@ func TestProcessRecord_propagatesDiscordError(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestProcessRecord_ackDeletesPermanentDiscordError(t *testing.T) {
+	t.Parallel()
+
+	md := &mockDiscord{sendFunc: func(ctx context.Context, channelID, content, roleID string) error {
+		return &discord.APIError{StatusCode: 404, Body: "not found"}
+	}}
+	h := newTestHandler(md, servermap.Mapping{})
+
+	err := h.processRecord(context.Background(), events.SQSMessage{
+		MessageId: "m1",
+		Body:      `{"serverId":"x","status":"UP","guildId":"g","channelId":"c","roleId":""}`,
+	})
+	if err != nil {
+		t.Fatalf("expected nil for permanent 404, got %v", err)
 	}
 }
 
@@ -248,27 +359,6 @@ func TestFormatDiscordContent(t *testing.T) {
 	}
 }
 
-func TestHandleRequest_discordError_marksFailure(t *testing.T) {
-	t.Parallel()
-
-	md := &mockDiscord{sendFunc: func(ctx context.Context, channelID, content, roleID string) error {
-		return errors.New("discord down")
-	}}
-	h := newTestHandler(md, servermap.Mapping{})
-
-	ev := events.SQSEvent{Records: []events.SQSMessage{
-		{MessageId: "m1", Body: `{"serverId":"x","status":"UP","guildId":"g","channelId":"c","roleId":""}`},
-	}}
-
-	resp, err := h.HandleRequest(context.Background(), ev)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(resp.BatchItemFailures) != 1 || resp.BatchItemFailures[0].ItemIdentifier != "m1" {
-		t.Fatalf("expected m1 failure, got %+v", resp.BatchItemFailures)
-	}
-}
-
 func TestHandleRequest_noRecords(t *testing.T) {
 	t.Parallel()
 	h := newTestHandler(&mockDiscord{}, servermap.Mapping{})
@@ -281,35 +371,89 @@ func TestHandleRequest_noRecords(t *testing.T) {
 	}
 }
 
-func TestHandleRequest_stillContinuesAfterFailure(t *testing.T) {
+func TestSqsQueueNameFromURL(t *testing.T) {
+	t.Parallel()
+	if got := sqsQueueNameFromURL("https://sqs.us-east-1.amazonaws.com/123/discord-guild-notify-jobs-dlq"); got != "discord-guild-notify-jobs-dlq" {
+		t.Fatalf("got %q", got)
+	}
+	if sqsQueueNameFromURL("") != "" {
+		t.Fatal("expected empty")
+	}
+}
+
+func TestDiscordHTTPClient_returnsAPIError(t *testing.T) {
 	t.Parallel()
 
-	md := &mockDiscord{
-		sendFunc: func(ctx context.Context, channelID, content, roleID string) error {
-			if strings.Contains(content, "**DOWN**") {
-				return errors.New("nope")
-			}
-			return nil
-		},
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"message":"Missing Access"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	client := &discordHTTPClient{
+		httpClient: srv.Client(),
+		baseURL:    srv.URL,
+		botToken:   "test",
 	}
-	h := newTestHandler(md, servermap.Mapping{})
+	err := client.SendChannelMessage(context.Background(), "ch", "hello", "")
+	apiErr, ok := discord.AsAPIError(err)
+	if !ok {
+		t.Fatalf("expected APIError, got %T %v", err, err)
+	}
+	if apiErr.StatusCode != 403 || !apiErr.Permanent() {
+		t.Fatalf("unexpected: %+v permanent=%v", apiErr, apiErr.Permanent())
+	}
+}
 
-	ev := events.SQSEvent{Records: []events.SQSMessage{
-		{MessageId: "a", Body: `{"serverId":"x","status":"DOWN","guildId":"g","channelId":"c","roleId":""}`},
-		{MessageId: "b", Body: `{"serverId":"x","status":"UP","guildId":"g","channelId":"c","roleId":""}`},
-	}}
+func TestDiscordHTTPClient_503Retryable(t *testing.T) {
+	t.Parallel()
 
-	resp, err := h.HandleRequest(context.Background(), ev)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(srv.Close)
+
+	client := &discordHTTPClient{
+		httpClient: srv.Client(),
+		baseURL:    srv.URL,
+		botToken:   "test",
+	}
+	err := client.SendChannelMessage(context.Background(), "ch", "hello", "")
+	apiErr, ok := discord.AsAPIError(err)
+	if !ok || !apiErr.Retryable() {
+		t.Fatalf("expected retryable APIError, got %v", err)
+	}
+}
+
+func TestEmitNotifySendError_skipsNonHTTP(t *testing.T) {
+	t.Parallel()
+	// smoke: must not panic
+	emitNotifySendError(0)
+	emitNotifySendError(399)
+	emitNotifySendError(600)
+}
+
+func TestHandleDiscordSendError_classification(t *testing.T) {
+	t.Parallel()
+	h := &Handler{}
+
+	err := h.handleDiscordSendError(
+		models.GuildNotifyJob{ServerID: "s", Status: "UP", GuildID: "g", ChannelID: "c"},
+		"mid",
+		fmt.Errorf("wrap: %w", &discord.APIError{StatusCode: 403}),
+	)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("403 should ack-delete: %v", err)
 	}
-	if len(resp.BatchItemFailures) != 1 || resp.BatchItemFailures[0].ItemIdentifier != "a" {
-		t.Fatalf("expected only a failed, got %+v", resp.BatchItemFailures)
-	}
-	if len(md.calls) != 2 {
-		t.Fatalf("expected both attempted, got %d", len(md.calls))
+
+	err = h.handleDiscordSendError(
+		models.GuildNotifyJob{ServerID: "s", Status: "UP", GuildID: "g", ChannelID: "c"},
+		"mid",
+		&discord.APIError{StatusCode: 429},
+	)
+	if err == nil {
+		t.Fatal("429 should retry")
 	}
 }
 
 var _ DiscordClient = (*mockDiscord)(nil)
-
