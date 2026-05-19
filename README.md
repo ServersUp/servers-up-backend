@@ -47,7 +47,36 @@ graph TD
   Notifier -->|DiscordAPI| DiscordAPI
 ```
 
-Primary notify queue: `discord-guild-notify-jobs`. DLQ: `discord-guild-notify-jobs-dlq`. The notifier ack-deletes most **4xx** Discord send failures and invalid payloads on the primary queue (they never reach the DLQ). **429**, **5xx**, and network errors retry via `ReportBatchItemFailures` and can land in the DLQ after five failed receives.
+### How it works
+
+ServersUp has two main paths: **commands** (Discord → bot) and **notifications** (status change → Discord channels).
+
+**Commands**  
+Users run slash commands in Discord. Discord calls the bot API (Lambda behind a function URL). The bot reads and writes **subscriptions** and **current status** in DynamoDB, using a shared **server catalog** in S3 so friendly names line up with the same server IDs the pollers use.
+
+**Status polling**  
+On a schedule (EventBridge), one or more **poller** Lambdas check whether game servers are up or down. Each poller is built for a particular way of getting status—REST API, ping, scraping, or similar—without tying the overall design to one game or vendor. Results are stored in a shared **status** table in DynamoDB. Only rows that actually change are interesting downstream; unchanged polls do not spam the notification path.
+
+**Notifications**  
+When a status row changes, **DynamoDB Streams** emits an event. A **job-creator** Lambda handles that stream: for each Discord subscription on that server, it enqueues a small job on **SQS**. **Notifier** Lambdas consume those jobs in batches and post to the right channel (and optional role mention).
+
+The queue is there because load is **not evenly spread across servers**—popular regions concentrate many subscribers on the same status flip. The stream burst is turned into many queue messages; SQS drives **multiple notifier Lambdas in parallel** and smooths work through batching, instead of one hot server update fanning out in a single invocation.
+
+**If a notification cannot be sent**  
+Some failures are treated as permanent (bad job data, or Discord will not allow the post). Those are removed from the main queue so they do not retry for days.
+
+Others look temporary (rate limits, Discord or network trouble). Those stay on the main queue and are retried. After several failed attempts, the job moves to a **dead-letter queue** so you can inspect it, fix the cause, and optionally redrive back to the main queue in AWS.
+
+**Configuration (change behavior without redeploying logic)**  
+- **Shared catalog** (`server-mapping.json` in S3): which games and servers exist, how they appear in Discord, and how names map to status IDs. Used by the bot and notifiers.  
+- **Per-poller config** (separate JSON in S3, e.g. realm list for Battle.net): what that poller should check. Add servers or regions by editing JSON, not Go.  
+- **Secrets** (SSM Parameter Store): API keys and tokens. Lambdas load these at runtime.
+
+**Caching**  
+Hot paths avoid hammering S3, SSM, or DynamoDB on every request: server-mapping and secrets are cached with a TTL; the bot caches guild channel names and `/status` results briefly; pollers can reuse credentials across invocations on a warm instance.
+
+**Logging and metrics**  
+All Lambdas emit **structured JSON logs** (`slog`) to CloudWatch; verbosity is controlled with `LOG_LEVEL`. Selected failures and counts are also published as **CloudWatch metrics** (embedded in log lines)—for example poll errors and failed Discord sends—so you can alarm and trend without parsing every log line.
 
 ## Technology Stack
 
@@ -72,12 +101,11 @@ Primary notify queue: `discord-guild-notify-jobs`. DLQ: `discord-guild-notify-jo
 
 ### Why SQS between “job creator” and “notifier”
 
-Guild notifications can concentrate heavily on a small number of popular servers. The DynamoDB stream → **job creator** → **SQS** → **notifier** design helps:
+Player populations cluster on certain regions and realms, so one status change can mean a large burst of notify jobs. The stream → **job creator** → **SQS** → **notifier** path helps:
 
-- **Avoid hot-spotting**: decouples bursty stream events from Discord outbound sends.
-- **Smooth spikes**: the queue buffers surges so the notifier can process at a steady rate.
-- **Scale out safely**: SQS-triggered concurrency lets the notifier fan out work without a single server update causing a huge synchronous blast.
-- **DLQ for repeated failures**: `discord-guild-notify-jobs-dlq` holds messages that still fail after five receives on the primary queue (e.g. sustained **5xx** or **429**). Permanent **4xx** sends are ack-deleted on the primary queue and do not use the DLQ.
+- **Spread hot servers**: decouple the DynamoDB stream spike from notifier concurrency.
+- **Fan out Lambdas**: SQS triggers many notifier invocations and batches work across them.
+- **Dead-letter queue**: jobs that still fail after repeated tries are set aside for review instead of retrying forever.
 
 ## Directory Structure
 
@@ -117,12 +145,11 @@ A Lambda Function URL-backed API that processes Discord interactions. Command lo
 *   **Security**: Mandatory Ed25519 signature verification plus a maximum age on `X-Signature-Timestamp` to reject replayed requests.
 
 ### 3. Discord guild notify pipeline
-When status changes in DynamoDB, a stream-triggered job creator enqueues per-subscription work to the primary SQS queue (`discord-guild-notify-jobs`); a notifier Lambda posts to subscribed Discord channels (optional role mention).
+When status changes in DynamoDB, a stream-triggered job creator enqueues per-subscription work to SQS; a notifier Lambda posts to subscribed Discord channels (optional role mention). See **How it works** above for the end-to-end story and how the main queue and dead-letter queue behave.
 
-- **Queues**: primary `discord-guild-notify-jobs`; DLQ `discord-guild-notify-jobs-dlq` (SQS redrive after five failed receives on the primary queue).
-- **Partial batch failures**: the notifier uses `ReportBatchItemFailures`. **429** (rate limit), **5xx**, and network errors are retried and may reach the DLQ. Other **4xx** responses and invalid job payloads are ack-deleted on the primary queue (no DLQ).
-- **Metrics**: `NotifySendError` (CloudWatch EMF) on Discord **4xx and 5xx** send failures.
-- **DLQ redrive**: operators can move messages from the DLQ back to the primary queue via the AWS console or API (`StartMessageMoveTask`).
+- **Queues**: primary `discord-guild-notify-jobs`; dead-letter `discord-guild-notify-jobs-dlq`.
+- **Reliability**: transient send failures retry on the primary queue; clearly permanent failures are dropped; repeatedly failing jobs land in the dead-letter queue for operator review and redrive.
+- **Metrics**: `NotifySendError` in CloudWatch when Discord rejects a channel post.
 
 ## ⚙️ CI/CD Pipeline
 
