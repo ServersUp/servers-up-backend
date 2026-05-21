@@ -6,7 +6,7 @@ Discord commands (`/subscribe`, `/games`, `/servers`, `/status`, autocomplete, n
 
 ## Battle.net polling config (separate today)
 
-The [`bnet-polling-function`](../cmd/bnet-polling-function/) reads a **separate** S3 JSON (`BNET_SERVER_CONFIG_PATH`) with region, locale, and a `realms[]` list (`connected_realm_id`, etc.). Status is written to the status DynamoDB table (`DDB_TABLE_NAME`).
+Regional Battle.net poller Lambdas (e.g. [`bnet-polling-function-us`](../cmd/bnet-polling-function-us/)) are thin entrypoints over [`internal/bnetpoller`](../internal/bnetpoller/). Each reads a **separate** S3 JSON (`BNET_SERVER_CONFIG_PATH`) with region, locale, and a `realms[]` list (`connected_realm_id`, etc.). Status is written to the status DynamoDB table (`DDB_TABLE_NAME`).
 
 ## Future: unified catalog
 

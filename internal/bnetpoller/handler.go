@@ -1,4 +1,4 @@
-package main
+package bnetpoller
 
 import (
 	"context"
@@ -14,7 +14,6 @@ import (
 	"github.com/ServersUp/servers-up-backend/internal/logsetup"
 	"github.com/ServersUp/servers-up-backend/internal/metrics"
 	"github.com/aws/aws-lambda-go/events"
-	"github.com/aws/aws-lambda-go/lambda"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -30,7 +29,7 @@ type bnetClient interface {
 	GetConnectedRealmStatus(ctx context.Context, region string, connectedRealmID int, locale string) (*bnet.ConnectedRealmResponse, error)
 }
 
-// Handler manages the dependencies and lifecycle of the polling request.
+// Handler manages dependencies and lifecycle for a Battle.net polling Lambda.
 type Handler struct {
 	configProvider *config.Provider
 	database       statusDB
@@ -38,7 +37,7 @@ type Handler struct {
 	bnetSecret     string
 }
 
-// NewHandler loads AWS clients and secrets; on failure it logs and exits (see main).
+// NewHandler loads AWS clients and secrets. On failure it logs and exits the process.
 func NewHandler(ctx context.Context) *Handler {
 	cfg, err := awsconfig.LoadDefaultConfig(ctx)
 	if err != nil {
@@ -82,8 +81,8 @@ func (h *Handler) HandleRequest(ctx context.Context, event events.CloudWatchEven
 		return "", err
 	}
 
-	bnetClient := bnet.NewClient(h.bnetClientID, h.bnetSecret)
-	summary, err := h.pollRealms(ctx, bnetClient, bnetConfig)
+	client := bnet.NewClient(h.bnetClientID, h.bnetSecret)
+	summary, err := h.pollRealms(ctx, client, bnetConfig)
 	if err != nil {
 		return "", err
 	}
@@ -93,11 +92,12 @@ func (h *Handler) HandleRequest(ctx context.Context, event events.CloudWatchEven
 		"up", summary.Up,
 		"down", summary.Down,
 		"errors", summary.Errors,
+		"bnetRegion", bnetConfig.Region,
 	)
 
-	metrics.EmitCount(metrics.Namespace, "PollRealmSuccess", map[string]string{"gameId": "wow"}, int64(summary.Successful))
+	metrics.EmitCount(metrics.Namespace, "PollRealmSuccess", map[string]string{"gameId": "wow", "bnetRegion": bnetConfig.Region}, int64(summary.Successful))
 	if summary.Errors > 0 {
-		metrics.EmitCount(metrics.Namespace, "PollRealmError", map[string]string{"gameId": "wow"}, int64(summary.Errors))
+		metrics.EmitCount(metrics.Namespace, "PollRealmError", map[string]string{"gameId": "wow", "bnetRegion": bnetConfig.Region}, int64(summary.Errors))
 	}
 
 	return "Polling completed successfully", nil
@@ -161,8 +161,7 @@ func (h *Handler) pollRealms(ctx context.Context, client bnetClient, bnetConfig 
 	return summary, nil
 }
 
-func main() {
+// ConfigureLogging sets up JSON slog for Lambda using LOG_LEVEL.
+func ConfigureLogging() {
 	logsetup.ConfigureDefaultFromEnv()
-	handler := NewHandler(context.Background())
-	lambda.Start(handler.HandleRequest)
 }
