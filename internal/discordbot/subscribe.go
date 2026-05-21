@@ -80,12 +80,8 @@ func (h *Handler) handleSubscribe(ctx context.Context, interaction discord.Inter
 		return h.discordResponse("Failed to verify subscription. Please try again later.")
 	}
 	for _, e := range existing {
-		if e.ChannelID == interaction.ChannelID && e.ServerID == technicalID && e.Mention == mention {
-			displayRole := roleName
-			if displayRole == "" {
-				displayRole = e.RoleName
-			}
-			return h.discordResponse(h.alreadySubscribedMessage(ctx, interaction.GuildID, interaction.ChannelID, gameID, serverKey, displayRole, mention))
+		if e.ChannelID == interaction.ChannelID && e.ServerID == technicalID {
+			return h.discordResponse(h.alreadySubscribedMessage(ctx, interaction.GuildID, interaction.ChannelID, gameID, serverKey, e.RoleName, e.Mention))
 		}
 	}
 
