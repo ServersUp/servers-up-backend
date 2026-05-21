@@ -5,6 +5,16 @@ import (
 	"testing"
 )
 
+func TestDisplayLabel(t *testing.T) {
+	t.Parallel()
+	if got := DisplayLabel("wow", "illidan"); got != "wow-illidan" {
+		t.Fatalf("got %q, want wow-illidan", got)
+	}
+	if got := DisplayLabel("wipe", "b"); got != "wipe-b" {
+		t.Fatalf("got %q, want wipe-b", got)
+	}
+}
+
 func TestHumanLabel_match(t *testing.T) {
 	t.Parallel()
 	m := Mapping{

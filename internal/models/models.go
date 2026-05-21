@@ -35,6 +35,8 @@ type Subscription struct {
 	Mention   string `json:"mention" dynamodbav:"mention"`
 	// RoleName is the Discord role display name (resolved at subscribe time when a bot token is configured).
 	RoleName string `json:"role_name,omitempty" dynamodbav:"roleName,omitempty"`
+	// ServerLabel is the human-readable "game-server" label captured at subscribe time (e.g. "wow-illidan").
+	ServerLabel string `json:"server_label,omitempty" dynamodbav:"serverLabel,omitempty"`
 }
 
 // GuildNotifyJob is the payload sent to the Discord guild notify SQS queue when
@@ -45,4 +47,7 @@ type GuildNotifyJob struct {
 	GuildID   string `json:"guildId"`
 	ChannelID string `json:"channelId"`
 	RoleID    string `json:"roleId,omitempty"`
+	// ServerLabel is the human-readable "game-server" label captured at subscribe time.
+	// When non-empty, the notify lambda uses this directly instead of reverse-mapping the technical ID.
+	ServerLabel string `json:"serverLabel,omitempty"`
 }

@@ -149,7 +149,10 @@ func (h *Handler) processRecord(ctx context.Context, rec events.SQSMessage) erro
 		return nil
 	}
 
-	serverLabel := h.humanServerName(ctx, job.ServerID)
+	serverLabel := job.ServerLabel
+	if serverLabel == "" {
+		serverLabel = h.humanServerName(ctx, job.ServerID)
+	}
 	content := formatDiscordContent(job, serverLabel)
 
 	slog.Info("sending discord notification",

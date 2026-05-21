@@ -295,6 +295,32 @@ func TestHandleRequest_multipleRecords(t *testing.T) {
 	}
 }
 
+func TestProcessRecord_serverLabelPropagatedToJob(t *testing.T) {
+	t.Parallel()
+	ml := &mockLister{
+		subs: []models.Subscription{
+			{ServerID: "battlenet#us#11", GuildID: "g1", ChannelID: "c1", ServerLabel: "wow-illidan"},
+		},
+	}
+	ms := &mockSQS{}
+	h := &Handler{list: ml, sqs: ms, queueURL: "https://sqs.example/queue"}
+
+	rec := statusChangeRecord("UP", "DOWN")
+	if err := h.processRecord(context.Background(), &rec); err != nil {
+		t.Fatal(err)
+	}
+	if len(ms.bodies) != 1 {
+		t.Fatalf("expected 1 sqs message, got %d", len(ms.bodies))
+	}
+	var job models.GuildNotifyJob
+	if err := json.Unmarshal([]byte(ms.bodies[0]), &job); err != nil {
+		t.Fatal(err)
+	}
+	if job.ServerLabel != "wow-illidan" {
+		t.Fatalf("expected ServerLabel=wow-illidan in SQS job, got %q", job.ServerLabel)
+	}
+}
+
 func TestHandleRequest_stopsOnError(t *testing.T) {
 	t.Parallel()
 	ml := &mockLister{err: errors.New("fail")}

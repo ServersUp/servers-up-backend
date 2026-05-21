@@ -9,8 +9,17 @@ import (
 	"github.com/ServersUp/servers-up-backend/internal/servermap"
 )
 
+// subscriptionServerLabel returns the human-readable server label for a subscription,
+// preferring the label captured at subscribe time over a live reverse-mapping lookup.
+func subscriptionServerLabel(mapping servermap.Mapping, sub models.Subscription) string {
+	if sub.ServerLabel != "" {
+		return sub.ServerLabel
+	}
+	return mapping.HumanLabel(sub.ServerID)
+}
+
 func (h *Handler) subscriptionDisplayLabel(mapping servermap.Mapping, sub models.Subscription) string {
-	human := mapping.HumanLabel(sub.ServerID)
+	human := subscriptionServerLabel(mapping, sub)
 	if sub.RoleName != "" {
 		return fmt.Sprintf("%s @%s", human, sub.RoleName)
 	}
@@ -22,7 +31,7 @@ func (h *Handler) subscriptionDisplayLabel(mapping servermap.Mapping, sub models
 
 // subscriptionUnsubscribeChoiceText is shown in autocomplete only (no subscription IDs; role as @Name when known).
 func (h *Handler) subscriptionUnsubscribeChoiceText(ctx context.Context, guildID string, mapping servermap.Mapping, sub models.Subscription) string {
-	game, server := splitGameServerHuman(mapping.HumanLabel(sub.ServerID))
+	game, server := splitGameServerHuman(subscriptionServerLabel(mapping, sub))
 	role := h.subscriptionRoleDisplay(sub)
 	ch := h.channelPretty(ctx, guildID, sub.ChannelID)
 	return fmt.Sprintf("%s · %s · %s · in %s", game, server, role, ch)

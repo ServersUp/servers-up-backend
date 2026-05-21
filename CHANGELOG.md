@@ -4,6 +4,11 @@ All notable user-facing changes to ServersUp Backend will be documented in this 
 
 This changelog is intended to be readable for end users and can be published directly to the project website.
 
+## v1.0.5 — 2026-05-21
+
+### Fixed
+- **Status notifications** now show the server name exactly as it appeared when you subscribed (e.g. `wow-illidan`), rather than reverse-mapping the internal server ID at notify time. Existing subscriptions without a stored label continue to use the fallback mapping as before.
+
 ## v1.0.4 — 2026-05-21
 
 ### Fixed
