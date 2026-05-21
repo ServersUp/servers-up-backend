@@ -4,6 +4,11 @@ All notable user-facing changes to ServersUp Backend will be documented in this 
 
 This changelog is intended to be readable for end users and can be published directly to the project website.
 
+## v1.0.4 — 2026-05-21
+
+### Fixed
+- **`/subscribe`** — treats an existing subscription for the same channel and server as a duplicate even when the optional role differs (e.g. channel-wide vs role mention).
+
 ## v1.0.3 — 2026-05-15
 
 ### Changed

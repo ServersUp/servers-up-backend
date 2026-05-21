@@ -194,6 +194,78 @@ func TestHandleRequest(t *testing.T) {
 		}
 	})
 
+	t.Run("Subscribe duplicate blocked when same channel+server with different role config (Type 2)", func(t *testing.T) {
+		timestamp := discordSigTS(t)
+
+		cases := []struct {
+			name       string
+			existing   models.Subscription
+			body       string
+			wantSubstr []string
+		}{
+			{
+				name: "existing role, subscribe channel-wide",
+				existing: models.Subscription{
+					ServerID:  "battlenet#us#57",
+					GuildID:   "guild-1",
+					ChannelID: "chan-1",
+					Mention:   "<@&123>",
+					RoleName:  "Raid",
+				},
+				body: `{"type": 2, "guild_id": "guild-1", "channel_id": "chan-1", "member": {"user": {"id": "user-1"}, "permissions": "16"}, "data": {"name": "subscribe", "options": [{"name": "game", "value": "wow"}, {"name": "server", "value": "illidan"}]}}`,
+				wantSubstr: []string{"Already subscribed", "wow-illidan", "@Raid"},
+			},
+			{
+				name: "existing channel-wide, subscribe with role",
+				existing: models.Subscription{
+					ServerID:  "battlenet#us#57",
+					GuildID:   "guild-1",
+					ChannelID: "chan-1",
+					Mention:   "",
+					RoleName:  "",
+				},
+				body: `{"type": 2, "guild_id": "guild-1", "channel_id": "chan-1", "member": {"user": {"id": "user-1"}, "permissions": "16"}, "data": {"name": "subscribe", "options": [{"name": "game", "value": "wow"}, {"name": "server", "value": "illidan"}, {"name": "role", "value": "123"}]}}`,
+				wantSubstr: []string{"Already subscribed", "wow-illidan"},
+			},
+		}
+
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				sig := hex.EncodeToString(ed25519.Sign(priv, []byte(timestamp+tc.body)))
+
+				var addCalls int
+				mockDB.ListFunc = func(ctx context.Context, guildID string) ([]models.Subscription, error) {
+					return []models.Subscription{tc.existing}, nil
+				}
+				mockDB.AddFunc = func(ctx context.Context, sub models.Subscription) error {
+					addCalls++
+					return nil
+				}
+
+				resp, _ := handler.HandleRequest(context.Background(), events.LambdaFunctionURLRequest{
+					Headers: map[string]string{
+						"x-signature-ed25519":   sig,
+						"x-signature-timestamp": timestamp,
+					},
+					Body: tc.body,
+				})
+				if resp.StatusCode != http.StatusOK {
+					t.Fatalf("expected 200, got %d", resp.StatusCode)
+				}
+				if addCalls != 0 {
+					t.Fatalf("expected AddSubscription not called, got %d calls", addCalls)
+				}
+				var discordResp discord.InteractionResponse
+				json.Unmarshal([]byte(resp.Body), &discordResp)
+				for _, s := range tc.wantSubstr {
+					if !strings.Contains(discordResp.Data.Content, s) {
+						t.Fatalf("expected %q in message, got %q", s, discordResp.Data.Content)
+					}
+				}
+			})
+		}
+	})
+
 	t.Run("Unsubscribe removes selected subscription (Type 2)", func(t *testing.T) {
 		body := `{"type": 2, "guild_id": "guild-1", "channel_id": "chan-1", "member": {"user": {"id": "user-1"}, "permissions": "16"}, "data": {"name": "unsubscribe", "options": [{"name": "subscription", "value": "sub-illidan-1"}]}}`
 		timestamp := discordSigTS(t)
