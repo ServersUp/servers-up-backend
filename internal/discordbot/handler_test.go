@@ -127,6 +127,9 @@ func TestHandleRequest(t *testing.T) {
 			if sub.Mention != "<@&123>" {
 				return fmt.Errorf("unexpected mention: %s", sub.Mention)
 			}
+			if sub.ServerLabel != "wow-illidan" {
+				return fmt.Errorf("unexpected server label: %s", sub.ServerLabel)
+			}
 			return nil
 		}
 

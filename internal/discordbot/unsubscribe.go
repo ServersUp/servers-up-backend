@@ -60,7 +60,7 @@ func (h *Handler) handleUnsubscribe(ctx context.Context, interaction discord.Int
 		return h.discordResponse("System error: Unable to load server configuration right now. Please try again in a bit.")
 	}
 
-	human := mapping.HumanLabel(match.ServerID)
+	human := subscriptionServerLabel(mapping, *match)
 	slog.Info("unsubscribe request resolved",
 		"guildID", interaction.GuildID,
 		"requestedChannelID", interaction.ChannelID,

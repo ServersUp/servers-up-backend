@@ -55,7 +55,7 @@ func (h *Handler) handleListSubscriptions(ctx context.Context, interaction disco
 		})
 
 		for _, sub := range entries {
-			human := mapping.HumanLabel(sub.ServerID)
+			human := subscriptionServerLabel(mapping, sub)
 			if sub.Mention != "" {
 				lines = append(lines, fmt.Sprintf("- `%s` %s", human, sub.Mention))
 			} else {

@@ -84,6 +84,11 @@ func (m Mapping) Lookup(gameInput, serverInput string) (gameID string, game Game
 	return gameID, g, serverName, s, nil
 }
 
+// DisplayLabel returns the display label for a known game/server pair (e.g. "wow-illidan").
+func DisplayLabel(gameID, serverKey string) string {
+	return fmt.Sprintf("%s-%s", gameID, serverKey)
+}
+
 // HumanLabel maps a technical server ID (provider#region#identifier) to a display label (game-server).
 // Returns technicalServerID unchanged when the ID is malformed or not found in the mapping.
 func (m Mapping) HumanLabel(technicalServerID string) string {
@@ -101,7 +106,7 @@ func (m Mapping) HumanLabel(technicalServerID string) string {
 		}
 		for serverKey, server := range game.Servers {
 			if server.Region == region && fmt.Sprint(server.Identifier) == identifier {
-				return fmt.Sprintf("%s-%s", gameID, serverKey)
+				return DisplayLabel(gameID, serverKey)
 			}
 		}
 	}

@@ -130,11 +130,12 @@ func (h *Handler) processRecord(ctx context.Context, rec *events.DynamoDBEventRe
 		sub := sub
 		g.Go(func() error {
 			job := models.GuildNotifyJob{
-				ServerID:  serverID,
-				Status:    newStatus,
-				GuildID:   sub.GuildID,
-				ChannelID: sub.ChannelID,
-				RoleID:    roleIDFromMention(sub.Mention),
+				ServerID:    serverID,
+				Status:      newStatus,
+				GuildID:     sub.GuildID,
+				ChannelID:   sub.ChannelID,
+				RoleID:      roleIDFromMention(sub.Mention),
+				ServerLabel: sub.ServerLabel,
 			}
 
 			body, err := json.Marshal(job)

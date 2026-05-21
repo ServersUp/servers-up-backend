@@ -104,6 +104,7 @@ func (h *Handler) handleSubscribe(ctx context.Context, interaction discord.Inter
 		ChannelID:      interaction.ChannelID,
 		Mention:        mention,
 		RoleName:       roleName,
+		ServerLabel:    servermap.DisplayLabel(gameID, serverKey),
 	}
 
 	if err := h.database.AddSubscription(ctx, sub); err != nil {

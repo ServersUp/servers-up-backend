@@ -133,6 +133,44 @@ func TestHandleRequest_usesHumanServerNameWhenMappingAvailable(t *testing.T) {
 	}
 }
 
+func TestHandleRequest_prefersJobServerLabelOverHumanLabel(t *testing.T) {
+	t.Parallel()
+
+	md := &mockDiscord{}
+	// Mapping resolves battlenet#us#57 to "wipe-b" — different from the subscribed label.
+	h := newTestHandler(md, servermap.Mapping{
+		Games: map[string]servermap.Game{
+			"wipe": {
+				Provider: "battlenet",
+				Servers: map[string]servermap.Server{
+					"b": {Region: "us", Identifier: 57},
+				},
+			},
+		},
+	})
+
+	// Job carries the label captured at subscribe time.
+	ev := events.SQSEvent{
+		Records: []events.SQSMessage{
+			{MessageId: "m1", Body: `{"serverId":"battlenet#us#57","status":"DOWN","guildId":"g","channelId":"c","serverLabel":"wow-illidan"}`},
+		},
+	}
+
+	resp, err := h.HandleRequest(context.Background(), ev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.BatchItemFailures) != 0 {
+		t.Fatalf("expected no failures, got %+v", resp.BatchItemFailures)
+	}
+	if !strings.Contains(md.calls[0].content, "wow-illidan") {
+		t.Fatalf("expected job serverLabel in content, got %q", md.calls[0].content)
+	}
+	if strings.Contains(md.calls[0].content, "wipe-b") {
+		t.Fatalf("should not fall back to HumanLabel when serverLabel is set, got %q", md.calls[0].content)
+	}
+}
+
 func TestHandleRequest_invalidJSON_ackDeletes(t *testing.T) {
 	t.Parallel()
 
