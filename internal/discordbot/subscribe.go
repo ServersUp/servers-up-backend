@@ -20,10 +20,12 @@ func (h *Handler) handleSubscribe(ctx context.Context, interaction discord.Inter
 	}
 
 	rawGame := h.getOption(data.Options, "game")
+	rawRegion := h.getOption(data.Options, "region")
 	rawServer := h.getOption(data.Options, "server")
 	roleID := h.getOption(data.Options, "role")
 
 	gameName := servermap.NormalizeKey(rawGame)
+	regionName := servermap.NormalizeKey(rawRegion)
 	serverName := servermap.NormalizeKey(rawServer)
 
 	slog.Info("subscribe request received",
@@ -32,8 +34,10 @@ func (h *Handler) handleSubscribe(ctx context.Context, interaction discord.Inter
 		"channelID", interaction.ChannelID,
 		"roleID", roleID,
 		"rawGame", rawGame,
+		"rawRegion", rawRegion,
 		"rawServer", rawServer,
 		"gameName", gameName,
+		"regionName", regionName,
 		"serverName", serverName,
 	)
 
@@ -43,22 +47,21 @@ func (h *Handler) handleSubscribe(ctx context.Context, interaction discord.Inter
 		return h.discordResponse("System error: Unable to load server configuration right now. Please try again in a bit.")
 	}
 
-	gameID, game, serverKey, server, lookupErr := mapping.Lookup(gameName, serverName)
+	gameID, regionKey, serverKey, game, server, lookupErr := mapping.Lookup(gameName, regionName, serverName)
 	if lookupErr != nil {
 		slog.Warn("subscribe request lookup failed",
 			"error", lookupErr,
 			"guildID", interaction.GuildID,
 			"channelID", interaction.ChannelID,
 			"roleID", roleID,
-			"rawGame", rawGame,
-			"rawServer", rawServer,
 			"gameName", gameName,
+			"regionName", regionName,
 			"serverName", serverName,
 		)
-		return h.discordResponse(h.formatLookupError(mapping, lookupErr, gameName, serverName))
+		return h.discordResponse(h.formatLookupError(mapping, lookupErr, gameName, regionName, serverName))
 	}
 
-	technicalID := serverid.Generate(game.Provider, server.Region, server.Identifier)
+	technicalID := serverid.Generate(game.Provider, regionKey, server.Identifier)
 
 	mention := ""
 	if roleID != "" {
@@ -81,7 +84,8 @@ func (h *Handler) handleSubscribe(ctx context.Context, interaction discord.Inter
 	}
 	for _, e := range existing {
 		if e.ChannelID == interaction.ChannelID && e.ServerID == technicalID {
-			return h.discordResponse(h.alreadySubscribedMessage(ctx, interaction.GuildID, interaction.ChannelID, gameID, serverKey, e.RoleName, e.Mention))
+			humanLabel := servermap.DisplayLabel(gameID, regionKey, serverKey)
+			return h.discordResponse(h.alreadySubscribedMessage(ctx, interaction.GuildID, interaction.ChannelID, humanLabel, e.RoleName, e.Mention))
 		}
 	}
 
@@ -91,12 +95,13 @@ func (h *Handler) handleSubscribe(ctx context.Context, interaction discord.Inter
 		"roleID", roleID,
 		"gameID", gameID,
 		"provider", game.Provider,
-		"region", server.Region,
+		"regionKey", regionKey,
 		"serverKey", serverKey,
 		"serverIdentifier", fmt.Sprint(server.Identifier),
 		"technicalServerID", technicalID,
 	)
 
+	serverLabel := servermap.DisplayLabel(gameID, regionKey, serverKey)
 	sub := models.Subscription{
 		ServerID:       technicalID,
 		SubscriptionID: uuid.New().String(),
@@ -104,7 +109,7 @@ func (h *Handler) handleSubscribe(ctx context.Context, interaction discord.Inter
 		ChannelID:      interaction.ChannelID,
 		Mention:        mention,
 		RoleName:       roleName,
-		ServerLabel:    servermap.DisplayLabel(gameID, serverKey),
+		ServerLabel:    serverLabel,
 	}
 
 	if err := h.database.AddSubscription(ctx, sub); err != nil {
@@ -133,12 +138,11 @@ func (h *Handler) handleSubscribe(ctx context.Context, interaction discord.Inter
 	metrics.EmitCount(metrics.Namespace, "SubscriptionWrite", map[string]string{"command": "subscribe"}, 1)
 
 	chLabel := h.channelPretty(ctx, interaction.GuildID, interaction.ChannelID)
-	humanKey := fmt.Sprintf("%s-%s", gameID, serverKey)
 	if roleName != "" {
-		return h.discordResponse(fmt.Sprintf("Subscribed @%s to **%s** server status updates in %s.", roleName, humanKey, chLabel))
+		return h.discordResponse(fmt.Sprintf("Subscribed @%s to **%s** server status updates in %s.", roleName, serverLabel, chLabel))
 	}
 	if mention != "" {
-		return h.discordResponse(fmt.Sprintf("Subscribed with a role mention to **%s** server status updates in %s.", humanKey, chLabel))
+		return h.discordResponse(fmt.Sprintf("Subscribed with a role mention to **%s** server status updates in %s.", serverLabel, chLabel))
 	}
-	return h.discordResponse(fmt.Sprintf("Subscribed this channel to **%s** server status updates in %s.", humanKey, chLabel))
+	return h.discordResponse(fmt.Sprintf("Subscribed this channel to **%s** server status updates in %s.", serverLabel, chLabel))
 }

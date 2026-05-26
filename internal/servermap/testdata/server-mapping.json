@@ -1,0 +1,38 @@
+{
+  "games": {
+    "wow": {
+      "provider": "battlenet",
+      "regions": {
+        "us": {
+          "servers": {
+            "illidan":     {"identifier": 57},
+            "area-52":     {"identifier": 1551},
+            "argent-dawn": {"identifier": 61},
+            "stormrage":   {"identifier": 1136},
+            "thrall":      {"identifier": 1071}
+          }
+        },
+        "eu": {
+          "servers": {
+            "kazzak":      {"identifier": 1305},
+            "argent-dawn": {"identifier": 1391},
+            "draenor":     {"identifier": 581},
+            "silvermoon":  {"identifier": 1377}
+          }
+        },
+        "kr": {
+          "servers": {
+            "azshara":     {"identifier": 214},
+            "hyjal":       {"identifier": 258}
+          }
+        },
+        "tw": {
+          "servers": {
+            "skywall":     {"identifier": 967},
+            "wrathbringer": {"identifier": 982}
+          }
+        }
+      }
+    }
+  }
+}

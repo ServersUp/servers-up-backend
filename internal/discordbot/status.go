@@ -24,15 +24,19 @@ type StatusStore interface {
 
 func (h *Handler) handleStatus(ctx context.Context, interaction discord.Interaction, data discord.InteractionData) (events.LambdaFunctionURLResponse, error) {
 	rawGame := h.getOption(data.Options, "game")
+	rawRegion := h.getOption(data.Options, "region")
 	rawServer := h.getOption(data.Options, "server")
 	gameName := servermap.NormalizeKey(rawGame)
+	regionName := servermap.NormalizeKey(rawRegion)
 	serverName := servermap.NormalizeKey(rawServer)
 
 	slog.Info("status requested",
 		"interactionId", interaction.ID,
 		"rawGame", rawGame,
+		"rawRegion", rawRegion,
 		"rawServer", rawServer,
 		"gameName", gameName,
+		"regionName", regionName,
 		"serverName", serverName,
 		"userId", interaction.InvokerUserID(),
 		"guildId", interaction.GuildID,
@@ -41,8 +45,11 @@ func (h *Handler) handleStatus(ctx context.Context, interaction discord.Interact
 	if gameName == "" {
 		return h.discordResponse("Missing `game`. Start typing in **game** to search, or use `/help`.")
 	}
+	if regionName == "" {
+		return h.discordResponse("Missing `region`. Choose **region** for the selected game.")
+	}
 	if serverName == "" {
-		return h.discordResponse("Missing `server`. Choose **game** first, then type to search **server**.")
+		return h.discordResponse("Missing `server`. Choose **game** and **region** first, then type to search **server**.")
 	}
 
 	if h.statusStore == nil {
@@ -71,12 +78,12 @@ func (h *Handler) handleStatus(ctx context.Context, interaction discord.Interact
 		return h.discordResponse("System error: Unable to load server configuration right now. Please try again in a bit.")
 	}
 
-	gameID, game, serverKey, server, lookupErr := mapping.Lookup(gameName, serverName)
+	gameID, regionKey, serverKey, game, server, lookupErr := mapping.Lookup(gameName, regionName, serverName)
 	if lookupErr != nil {
-		return h.discordResponse(h.formatLookupError(mapping, lookupErr, gameName, serverName))
+		return h.discordResponse(h.formatLookupError(mapping, lookupErr, gameName, regionName, serverName))
 	}
 
-	technicalID := serverid.Generate(game.Provider, server.Region, server.Identifier)
+	technicalID := serverid.Generate(game.Provider, regionKey, server.Identifier)
 
 	var row *models.GameServerStatus
 	if h.statusCache != nil {
@@ -88,7 +95,7 @@ func (h *Handler) handleStatus(ctx context.Context, interaction discord.Interact
 		row, err = h.statusStore.GetServerStatus(ctx, gameID, technicalID)
 		if err != nil {
 			if errors.Is(err, db.ErrServerStatusNotFound) {
-				human := fmt.Sprintf("%s-%s", gameID, serverKey)
+				human := servermap.DisplayLabel(gameID, regionKey, serverKey)
 				return h.discordResponse(fmt.Sprintf("No status recorded yet for **%s**. The poller may not have run yet.", human))
 			}
 			slog.Error("failed to load server status", "error", err, "gameID", gameID, "serverID", technicalID)
@@ -101,7 +108,7 @@ func (h *Handler) handleStatus(ctx context.Context, interaction discord.Interact
 
 	metrics.EmitCount(metrics.Namespace, "StatusLookup", map[string]string{"gameId": gameID}, 1)
 
-	human := fmt.Sprintf("%s-%s", gameID, serverKey)
+	human := servermap.DisplayLabel(gameID, regionKey, serverKey)
 	updated := formatStatusLastUpdated(row.LastUpdatedAt)
 	return h.discordResponse(fmt.Sprintf("**%s** is **%s** (last changed %s).", human, row.Status, updated))
 }
