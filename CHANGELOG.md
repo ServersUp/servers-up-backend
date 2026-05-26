@@ -7,12 +7,14 @@ This changelog is intended to be readable for end users and can be published dir
 ## v1.1 — 2026-05-26
 
 ### Added
-- **`/regions`** — list regions configured for a game (e.g. `us`, `eu`, `kr`, `tw` for WoW).
+- **Multi-region World of Warcraft** — the bot supports realms in **US, EU, Korea (KR), and Taiwan (TW)**, not only US. You pick a region when subscribing or checking status so the same realm name in different regions is handled correctly.
+- **`/regions`** — list which regions are available for a game (for WoW: `us`, `eu`, `kr`, `tw`).
 
 ### Changed
-- **Server catalog** — `server-mapping.json` is organized by **game → region → server** so the same server name can exist in different regions with different IDs.
-- **`/subscribe`**, **`/status`**, and **`/servers`** — require a **`region`** option; autocomplete runs game → region → server.
-- **Subscription labels** — new subscriptions use `game-region-server` (e.g. `wow-eu-kazzak`). **`/subscriptions`** and **`/unsubscribe`** autocomplete show game, region, and server separately where the label includes a region.
+- **`/subscribe`** — adds a required **`region`** option. Autocomplete order is **game → region → server** (type to search at each step). New subscriptions are labeled **`game-region-server`** (e.g. `wow-eu-kazzak`).
+- **`/unsubscribe`** — subscription picker and confirmation text use the region-aware label; autocomplete shows **game**, **region**, and **server** when the subscription includes a region.
+- **`/subscriptions`** — guild list shows region-aware labels (e.g. `wow-us-illidan`, `wow-eu-kazzak`) so you can tell US and EU (and other) realms apart in the same channel.
+- **`/status`** and **`/servers`** — require **`region`** like `/subscribe`; use them to look up or list servers in a specific region.
 
 ## v1.0.5 — 2026-05-21
 
