@@ -38,6 +38,23 @@ Register slash commands with Discord’s API: see [`discord-global-commands.md`]
 
 Regional Battle.net poller Lambdas share one entrypoint ([`bnet-polling-function`](../cmd/bnet-polling-function/)) over [`internal/bnetpoller`](../internal/bnetpoller/). The cmd calls `bnetpoller.LoadFromEnv` to read env vars, wire AWS clients, and resolve SSM secrets, then starts the handler. CI builds once and deploys the same binary to `BNetPollingLambda`, `BNetPollingLambdaEU`, `BNetPollingLambdaKR`, and `BNetPollingLambdaTW` (see `function_names` in `deployment-config.yaml`). Each AWS function loads a **separate** S3 JSON (`BNET_SERVER_CONFIG_PATH`) with region, locale, and `realms[]`—Terraform sets a distinct path per function. Status is written to the status DynamoDB table (`DDB_TABLE_NAME`).
 
+Example poller file shape (`bnet-servers-config-tw.json`):
+
+```json
+{
+  "region": "tw",
+  "locale": "zh_TW",
+  "realms": [
+    { "name": "Skywall", "slug": "skywall", "connected_realm_id": 974 }
+  ],
+  "polling_interval_seconds": 60
+}
+```
+
+To regenerate poller configs and `server-mapping.json` from Battle.net (localized names per region locale), run the gitignored maintainer tool:
+
+`go run ./scripts/generate-bnet-configs -out-dir <dir>` with `BNET_CLIENT_ID` and `BNET_CLIENT_SECRET` set. It writes `bnet-servers-config-<region>.json` plus `server-mapping.json` using [`internal/bnet`](../internal/bnet) (`BuildRealmConfigs`, `DefaultWoWRegionEndpoints`) and [`internal/servermap`](../internal/servermap).
+
 ## Future: unified catalog
 
 When additional poller Lambdas exist (API, scraper, pinger), the intended model is:
