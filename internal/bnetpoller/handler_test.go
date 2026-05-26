@@ -8,6 +8,7 @@ import (
 
 	"github.com/ServersUp/servers-up-backend/internal/bnet"
 	"github.com/ServersUp/servers-up-backend/internal/db"
+	"github.com/aws/aws-lambda-go/events"
 )
 
 type fakeBnet struct {
@@ -96,5 +97,134 @@ func TestPollRealms_unchangedStatusStillSuccess(t *testing.T) {
 	}
 	if summary.Successful != 1 || summary.Down != 1 {
 		t.Fatalf("summary: %+v", summary)
+	}
+}
+
+type fakeConfigLoader struct {
+	cfg        bnet.Config
+	err        error
+	gotBucket  string
+	gotKey     string
+}
+
+func (f *fakeConfigLoader) LoadJSONFromS3(_ context.Context, bucket, key string, target any) error {
+	f.gotBucket = bucket
+	f.gotKey = key
+	if f.err != nil {
+		return f.err
+	}
+	*(target.(*bnet.Config)) = f.cfg
+	return nil
+}
+
+func TestHandleRequest_usesInjectedConfig(t *testing.T) {
+	t.Parallel()
+	fakeConfig := bnet.Config{
+		Region: "us",
+		Locale: "en_US",
+		Realms: []bnet.RealmConfig{{Name: "a", ConnectedRealmID: 1}},
+	}
+	loader := &fakeConfigLoader{cfg: fakeConfig}
+	h := &Handler{
+		configBucket:   "bucket",
+		configKey:      "key",
+		configProvider: loader,
+		database:       &fakeDB{},
+		bnetClientID:   "id",
+		bnetSecret:     "secret",
+	}
+	// Swap the bnet client creation to avoid real HTTP; we test config wiring only.
+	// pollRealms is tested separately; here we verify HandleRequest loads config and returns no error.
+	// We use a minimal fakeBnet by overriding the client via a thin wrapper.
+	_, err := h.handleRequestWithClient(context.Background(), events.CloudWatchEvent{ID: "test"}, &fakeBnet{status: "UP"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loader.gotBucket != "bucket" || loader.gotKey != "key" {
+		t.Fatalf("config loader args: bucket=%q key=%q", loader.gotBucket, loader.gotKey)
+	}
+}
+
+func TestHandleRequest_configLoadError(t *testing.T) {
+	t.Parallel()
+	h := &Handler{
+		configBucket:   "bucket",
+		configKey:      "key",
+		configProvider: &fakeConfigLoader{err: errors.New("s3 unavailable")},
+		database:       &fakeDB{},
+	}
+	_, err := h.handleRequestWithClient(context.Background(), events.CloudWatchEvent{ID: "test"}, &fakeBnet{})
+	if err == nil {
+		t.Fatal("expected error from config load failure")
+	}
+}
+
+func TestNew(t *testing.T) {
+	t.Parallel()
+
+	valid := Deps{
+		ConfigLoader:     &fakeConfigLoader{},
+		StatusDB:         &fakeDB{},
+		BnetClientID:     "id",
+		BnetClientSecret: "secret",
+		ConfigBucket:     "bucket",
+		ConfigKey:        "key",
+	}
+
+	tests := []struct {
+		name    string
+		deps    Deps
+		wantErr bool
+	}{
+		{name: "success", deps: valid, wantErr: false},
+		{
+			name:    "nil ConfigLoader",
+			deps:    func() Deps { d := valid; d.ConfigLoader = nil; return d }(),
+			wantErr: true,
+		},
+		{
+			name:    "nil StatusDB",
+			deps:    func() Deps { d := valid; d.StatusDB = nil; return d }(),
+			wantErr: true,
+		},
+		{
+			name:    "empty BnetClientID",
+			deps:    func() Deps { d := valid; d.BnetClientID = ""; return d }(),
+			wantErr: true,
+		},
+		{
+			name:    "empty BnetClientSecret",
+			deps:    func() Deps { d := valid; d.BnetClientSecret = ""; return d }(),
+			wantErr: true,
+		},
+		{
+			name:    "empty ConfigBucket",
+			deps:    func() Deps { d := valid; d.ConfigBucket = ""; return d }(),
+			wantErr: true,
+		},
+		{
+			name:    "empty ConfigKey",
+			deps:    func() Deps { d := valid; d.ConfigKey = ""; return d }(),
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			h, err := New(tt.deps)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if h == nil {
+				t.Fatal("expected non-nil Handler")
+			}
+		})
 	}
 }
