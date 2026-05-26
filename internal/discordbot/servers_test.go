@@ -7,8 +7,8 @@ import (
 
 func TestFormatInlineServerListMessage(t *testing.T) {
 	t.Parallel()
-	msg := formatInlineServerListMessage("wipe", []string{"alpha", "beta"})
-	if !strings.Contains(msg, "**Servers for `wipe`** (2)") {
+	msg := formatInlineServerListMessage("wipe", "us", []string{"alpha", "beta"})
+	if !strings.Contains(msg, "**Servers for `wipe` (us)** (2)") {
 		t.Fatalf("unexpected header: %q", msg)
 	}
 	if !strings.Contains(msg, "`alpha`") || !strings.Contains(msg, "`beta`") {
@@ -26,7 +26,7 @@ func TestFormatLongServerListMessage_wowPopular(t *testing.T) {
 	all[1] = "area-52"
 	all[2] = "unknown-realm"
 
-	msg := formatLongServerListMessage("wow", all)
+	msg := formatLongServerListMessage("wow", "us", all)
 	if !strings.Contains(msg, "too long") {
 		t.Fatalf("expected too long message: %q", msg)
 	}
@@ -47,11 +47,24 @@ func TestFormatLongServerListMessage_nonWow(t *testing.T) {
 	for i := range all {
 		all[i] = "srv"
 	}
-	msg := formatLongServerListMessage("other", all)
+	msg := formatLongServerListMessage("other", "eu", all)
 	if !strings.Contains(msg, supportedGamesListURL) {
 		t.Fatalf("expected website link: %q", msg)
 	}
 	if strings.Contains(msg, "Popular US realms") {
 		t.Fatalf("non-wow should not show wow popular list: %q", msg)
+	}
+}
+
+func TestFormatLongServerListMessage_wowEuNoPopular(t *testing.T) {
+	t.Parallel()
+	all := make([]string, 26)
+	for i := range all {
+		all[i] = "realm-eu"
+	}
+	all[0] = "illidan" // popular key but wrong region
+	msg := formatLongServerListMessage("wow", "eu", all)
+	if strings.Contains(msg, "Popular US realms") {
+		t.Fatalf("wow EU should not show popular US list: %q", msg)
 	}
 }

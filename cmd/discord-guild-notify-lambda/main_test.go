@@ -108,8 +108,10 @@ func TestHandleRequest_usesHumanServerNameWhenMappingAvailable(t *testing.T) {
 		Games: map[string]servermap.Game{
 			"wow": {
 				Provider: "battlenet",
-				Servers: map[string]servermap.Server{
-					"illidan": {Region: "us", Identifier: 57},
+				Regions: map[string]servermap.Region{
+					"us": {Servers: map[string]servermap.Server{
+						"illidan": {Identifier: 57},
+					}},
 				},
 			},
 		},
@@ -128,7 +130,7 @@ func TestHandleRequest_usesHumanServerNameWhenMappingAvailable(t *testing.T) {
 	if len(resp.BatchItemFailures) != 0 {
 		t.Fatalf("expected no failures, got %+v", resp.BatchItemFailures)
 	}
-	if !strings.Contains(md.calls[0].content, "wow-illidan") {
+	if !strings.Contains(md.calls[0].content, "wow-us-illidan") {
 		t.Fatalf("expected game+server in content, got %q", md.calls[0].content)
 	}
 }
@@ -142,8 +144,10 @@ func TestHandleRequest_prefersJobServerLabelOverHumanLabel(t *testing.T) {
 		Games: map[string]servermap.Game{
 			"wipe": {
 				Provider: "battlenet",
-				Servers: map[string]servermap.Server{
-					"b": {Region: "us", Identifier: 57},
+				Regions: map[string]servermap.Region{
+					"us": {Servers: map[string]servermap.Server{
+						"b": {Identifier: 57},
+					}},
 				},
 			},
 		},

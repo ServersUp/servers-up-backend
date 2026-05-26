@@ -185,6 +185,9 @@ func (h *Handler) HandleRequest(ctx context.Context, request events.LambdaFuncti
 		case "games":
 			resp, err := h.handleGames(ctx)
 			return logInteractionMarshalErr(ctx, resp, err)
+		case "regions":
+			resp, err := h.handleRegions(ctx, data)
+			return logInteractionMarshalErr(ctx, resp, err)
 		case "servers":
 			resp, err := h.handleServers(ctx, data)
 			return logInteractionMarshalErr(ctx, resp, err)

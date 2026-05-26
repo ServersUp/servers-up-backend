@@ -36,11 +36,23 @@ func autocompleteGames(mapping servermap.Mapping, partial string, max int) []dis
 	return keysToAutocompleteChoices(matches)
 }
 
-func autocompleteServers(mapping servermap.Mapping, gameNorm, partial string, max int) ([]discord.ApplicationCommandOptionChoice, error) {
+func autocompleteRegions(mapping servermap.Mapping, gameNorm, partial string, max int) ([]discord.ApplicationCommandOptionChoice, error) {
 	if gameNorm == "" {
 		return nil, nil
 	}
-	servers, err := mapping.ListServers(gameNorm)
+	regions, err := mapping.ListRegions(gameNorm)
+	if err != nil {
+		return nil, err
+	}
+	matches := filterSortedKeysPrefix(regions, partial, max)
+	return keysToAutocompleteChoices(matches), nil
+}
+
+func autocompleteServers(mapping servermap.Mapping, gameNorm, regionNorm, partial string, max int) ([]discord.ApplicationCommandOptionChoice, error) {
+	if gameNorm == "" || regionNorm == "" {
+		return nil, nil
+	}
+	servers, err := mapping.ListServers(gameNorm, regionNorm)
 	if err != nil {
 		return nil, err
 	}

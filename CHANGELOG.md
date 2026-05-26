@@ -4,6 +4,16 @@ All notable user-facing changes to ServersUp Backend will be documented in this 
 
 This changelog is intended to be readable for end users and can be published directly to the project website.
 
+## v1.0.6 — 2026-05-26
+
+### Added
+- **`/regions`** — list regions configured for a game (e.g. `us`, `eu`, `kr`, `tw` for WoW).
+
+### Changed
+- **Server catalog** — `server-mapping.json` is organized by **game → region → server** so the same server name can exist in different regions with different IDs.
+- **`/subscribe`**, **`/status`**, and **`/servers`** — require a **`region`** option; autocomplete runs game → region → server.
+- **Subscription labels** — new subscriptions use `game-region-server` (e.g. `wow-eu-kazzak`). **`/subscriptions`** and **`/unsubscribe`** autocomplete show game, region, and server separately where the label includes a region.
+
 ## v1.0.5 — 2026-05-21
 
 ### Fixed

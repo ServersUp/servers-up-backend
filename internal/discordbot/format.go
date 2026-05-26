@@ -31,18 +31,27 @@ func (h *Handler) subscriptionDisplayLabel(mapping servermap.Mapping, sub models
 
 // subscriptionUnsubscribeChoiceText is shown in autocomplete only (no subscription IDs; role as @Name when known).
 func (h *Handler) subscriptionUnsubscribeChoiceText(ctx context.Context, guildID string, mapping servermap.Mapping, sub models.Subscription) string {
-	game, server := splitGameServerHuman(subscriptionServerLabel(mapping, sub))
+	game, region, server := splitGameServerHuman(subscriptionServerLabel(mapping, sub))
 	role := h.subscriptionRoleDisplay(sub)
 	ch := h.channelPretty(ctx, guildID, sub.ChannelID)
+	if region != "" && server != "" {
+		return fmt.Sprintf("%s · %s · %s · %s · in %s", game, region, server, role, ch)
+	}
 	return fmt.Sprintf("%s · %s · %s · in %s", game, server, role, ch)
 }
 
-func splitGameServerHuman(human string) (game, server string) {
-	game, server, ok := strings.Cut(human, "-")
-	if !ok || server == "" {
-		return human, human
+// splitGameServerHuman splits a display label (e.g. "wow-us-illidan") into game, region, and server.
+// Legacy labels without a region (e.g. "wow-illidan") return an empty region.
+func splitGameServerHuman(human string) (game, region, server string) {
+	parts := strings.Split(human, "-")
+	if len(parts) >= 3 {
+		return parts[0], parts[1], strings.Join(parts[2:], "-")
 	}
-	return game, server
+	game, rest, ok := strings.Cut(human, "-")
+	if !ok || rest == "" {
+		return human, "", human
+	}
+	return game, "", rest
 }
 
 func (h *Handler) subscriptionRoleDisplay(sub models.Subscription) string {
@@ -55,15 +64,14 @@ func (h *Handler) subscriptionRoleDisplay(sub models.Subscription) string {
 	return "channel-wide"
 }
 
-func (h *Handler) alreadySubscribedMessage(ctx context.Context, guildID, channelID, gameID, serverKey, roleName, mention string) string {
-	human := fmt.Sprintf("%s-%s", gameID, serverKey)
+func (h *Handler) alreadySubscribedMessage(ctx context.Context, guildID, channelID, humanLabel, roleName, mention string) string {
 	ch := h.channelPretty(ctx, guildID, channelID)
 	switch {
 	case roleName != "":
-		return fmt.Sprintf("Already subscribed — **%s** in %s with @%s.", human, ch, roleName)
+		return fmt.Sprintf("Already subscribed — **%s** in %s with @%s.", humanLabel, ch, roleName)
 	case mention != "":
-		return fmt.Sprintf("Already subscribed — **%s** in %s with a role mention.", human, ch)
+		return fmt.Sprintf("Already subscribed — **%s** in %s with a role mention.", humanLabel, ch)
 	default:
-		return fmt.Sprintf("Already subscribed — **%s** in %s.", human, ch)
+		return fmt.Sprintf("Already subscribed — **%s** in %s.", humanLabel, ch)
 	}
 }

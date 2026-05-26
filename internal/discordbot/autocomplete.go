@@ -20,7 +20,7 @@ func (h *Handler) handleAutocomplete(ctx context.Context, interaction discord.In
 
 	const maxChoices = 25
 	switch data.Name {
-	case "subscribe":
+	case "subscribe", "status":
 		mapping, err := h.loadServerMapping(ctx)
 		if err != nil {
 			slog.Error("autocomplete: failed to load server mapping", "error", err)
@@ -29,9 +29,17 @@ func (h *Handler) handleAutocomplete(ctx context.Context, interaction discord.In
 		switch focused.Name {
 		case "game":
 			return h.autocompleteResponse(autocompleteGames(mapping, optionStringValue(focused), maxChoices))
+		case "region":
+			gameNorm := servermap.NormalizeKey(h.getOption(data.Options, "game"))
+			choices, err := autocompleteRegions(mapping, gameNorm, optionStringValue(focused), maxChoices)
+			if err != nil {
+				return h.autocompleteResponse(nil)
+			}
+			return h.autocompleteResponse(choices)
 		case "server":
 			gameNorm := servermap.NormalizeKey(h.getOption(data.Options, "game"))
-			choices, err := autocompleteServers(mapping, gameNorm, optionStringValue(focused), maxChoices)
+			regionNorm := servermap.NormalizeKey(h.getOption(data.Options, "region"))
+			choices, err := autocompleteServers(mapping, gameNorm, regionNorm, optionStringValue(focused), maxChoices)
 			if err != nil {
 				return h.autocompleteResponse(nil)
 			}
@@ -39,17 +47,17 @@ func (h *Handler) handleAutocomplete(ctx context.Context, interaction discord.In
 		default:
 			return h.autocompleteResponse(nil)
 		}
-	case "servers":
-		if focused.Name != "game" {
-			return h.autocompleteResponse(nil)
-		}
+	case "regions":
 		mapping, err := h.loadServerMapping(ctx)
 		if err != nil {
 			slog.Error("autocomplete: failed to load server mapping", "error", err)
 			return h.autocompleteResponse(nil)
 		}
-		return h.autocompleteResponse(autocompleteGames(mapping, optionStringValue(focused), maxChoices))
-	case "status":
+		if focused.Name == "game" {
+			return h.autocompleteResponse(autocompleteGames(mapping, optionStringValue(focused), maxChoices))
+		}
+		return h.autocompleteResponse(nil)
+	case "servers":
 		mapping, err := h.loadServerMapping(ctx)
 		if err != nil {
 			slog.Error("autocomplete: failed to load server mapping", "error", err)
@@ -58,9 +66,9 @@ func (h *Handler) handleAutocomplete(ctx context.Context, interaction discord.In
 		switch focused.Name {
 		case "game":
 			return h.autocompleteResponse(autocompleteGames(mapping, optionStringValue(focused), maxChoices))
-		case "server":
+		case "region":
 			gameNorm := servermap.NormalizeKey(h.getOption(data.Options, "game"))
-			choices, err := autocompleteServers(mapping, gameNorm, optionStringValue(focused), maxChoices)
+			choices, err := autocompleteRegions(mapping, gameNorm, optionStringValue(focused), maxChoices)
 			if err != nil {
 				return h.autocompleteResponse(nil)
 			}

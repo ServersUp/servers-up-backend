@@ -13,12 +13,17 @@ import (
 
 func (h *Handler) handleServers(ctx context.Context, data discord.InteractionData) (events.LambdaFunctionURLResponse, error) {
 	rawGame := h.getOption(data.Options, "game")
+	rawRegion := h.getOption(data.Options, "region")
 	gameName := servermap.NormalizeKey(rawGame)
+	regionName := servermap.NormalizeKey(rawRegion)
 
-	slog.Info("servers list requested", "rawGame", rawGame, "gameName", gameName)
+	slog.Info("servers list requested", "rawGame", rawGame, "gameName", gameName, "rawRegion", rawRegion, "regionName", regionName)
 
 	if gameName == "" {
 		return h.discordResponse("Missing `game`. Start typing in **game** to search, or use `/help`.")
+	}
+	if regionName == "" {
+		return h.discordResponse("Missing `region`. Choose **region** for the selected game.")
 	}
 
 	mapping, err := h.loadServerMapping(ctx)
@@ -27,25 +32,25 @@ func (h *Handler) handleServers(ctx context.Context, data discord.InteractionDat
 		return h.discordResponse("System error: Unable to load server configuration right now. Please try again in a bit.")
 	}
 
-	servers, err := mapping.ListServers(gameName)
+	servers, err := mapping.ListServers(gameName, regionName)
 	if err != nil {
-		return h.discordResponse(h.formatLookupError(mapping, err, gameName, ""))
+		return h.discordResponse(h.formatLookupError(mapping, err, gameName, regionName, ""))
 	}
 
 	if len(servers) == 0 {
-		return h.discordResponse(fmt.Sprintf("No servers are configured for game `%s`.", gameName))
+		return h.discordResponse(fmt.Sprintf("No servers are configured for game `%s` (%s).", gameName, regionName))
 	}
 
 	if len(servers) > maxInlineServerNames {
-		return h.discordResponse(formatLongServerListMessage(gameName, servers))
+		return h.discordResponse(formatLongServerListMessage(gameName, regionName, servers))
 	}
 
-	return h.discordResponse(formatInlineServerListMessage(gameName, servers))
+	return h.discordResponse(formatInlineServerListMessage(gameName, regionName, servers))
 }
 
-func formatInlineServerListMessage(game string, servers []string) string {
+func formatInlineServerListMessage(game, region string, servers []string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "**Servers for `%s`** (%d)\n", game, len(servers))
+	fmt.Fprintf(&b, "**Servers for `%s` (%s)** (%d)\n", game, region, len(servers))
 	for _, s := range servers {
 		b.WriteString("- `")
 		b.WriteString(s)
@@ -54,16 +59,16 @@ func formatInlineServerListMessage(game string, servers []string) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
-func formatLongServerListMessage(game string, allServers []string) string {
+func formatLongServerListMessage(game, region string, allServers []string) string {
 	present := make(map[string]struct{}, len(allServers))
 	for _, s := range allServers {
 		present[s] = struct{}{}
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "The **`%s`** server list is too long to show here (%d servers).\n\n", game, len(allServers))
+	fmt.Fprintf(&b, "The **`%s`** (%s) server list is too long to show here (%d servers).\n\n", game, region, len(allServers))
 
-	if game == "wow" {
+	if game == "wow" && region == "us" {
 		var popular []string
 		for _, key := range wowPopularServerKeys {
 			if _, ok := present[key]; ok {

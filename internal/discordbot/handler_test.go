@@ -58,31 +58,40 @@ func discordSigTS(t *testing.T) string {
 	return strconv.FormatInt(time.Now().Unix(), 10)
 }
 
-func TestHandleRequest(t *testing.T) {
-	pub, priv, _ := ed25519.GenerateKey(nil)
-	publicKeyHex := hex.EncodeToString(pub)
-
-	mockDB := &MockDatabase{}
-	mockConfig := &MockConfig{
+// testMockConfig returns a MockConfig populated with the new multi-region mapping shape.
+func testMockConfig() *MockConfig {
+	return &MockConfig{
 		LoadFunc: func(ctx context.Context, bucket, key string, target any) error {
-			t := target.(*servermap.Mapping)
-			t.Games = map[string]servermap.Game{
+			m := target.(*servermap.Mapping)
+			m.Games = map[string]servermap.Game{
 				"wow": {
 					Provider: "battlenet",
-					Servers: map[string]servermap.Server{
-						"illidan": {Region: "us", Identifier: 57},
+					Regions: map[string]servermap.Region{
+						"us": {Servers: map[string]servermap.Server{
+							"illidan": {Identifier: 57},
+						}},
 					},
 				},
 				"wipe": {
 					Provider: "other",
-					Servers: map[string]servermap.Server{
-						"alpha": {Region: "us", Identifier: 1},
+					Regions: map[string]servermap.Region{
+						"us": {Servers: map[string]servermap.Server{
+							"alpha": {Identifier: 1},
+						}},
 					},
 				},
 			}
 			return nil
 		},
 	}
+}
+
+func TestHandleRequest(t *testing.T) {
+	pub, priv, _ := ed25519.GenerateKey(nil)
+	publicKeyHex := hex.EncodeToString(pub)
+
+	mockDB := &MockDatabase{}
+	mockConfig := testMockConfig()
 
 	handler := &Handler{
 		database:         mockDB,
@@ -113,7 +122,7 @@ func TestHandleRequest(t *testing.T) {
 	})
 
 	t.Run("Subscribe (Type 2)", func(t *testing.T) {
-		body := `{"type": 2, "guild_id": "guild-1", "channel_id": "chan-1", "member": {"user": {"id": "user-1"}, "permissions": "16"}, "data": {"name": "subscribe", "options": [{"name": "game", "value": "wow"}, {"name": "server", "value": "illidan"}, {"name": "role", "value": "123"}]}}`
+		body := `{"type": 2, "guild_id": "guild-1", "channel_id": "chan-1", "member": {"user": {"id": "user-1"}, "permissions": "16"}, "data": {"name": "subscribe", "options": [{"name": "game", "value": "wow"}, {"name": "region", "value": "us"}, {"name": "server", "value": "illidan"}, {"name": "role", "value": "123"}]}}`
 		timestamp := discordSigTS(t)
 		sig := hex.EncodeToString(ed25519.Sign(priv, []byte(timestamp+body)))
 
@@ -127,7 +136,7 @@ func TestHandleRequest(t *testing.T) {
 			if sub.Mention != "<@&123>" {
 				return fmt.Errorf("unexpected mention: %s", sub.Mention)
 			}
-			if sub.ServerLabel != "wow-illidan" {
+			if sub.ServerLabel != "wow-us-illidan" {
 				return fmt.Errorf("unexpected server label: %s", sub.ServerLabel)
 			}
 			return nil
@@ -153,7 +162,7 @@ func TestHandleRequest(t *testing.T) {
 	})
 
 	t.Run("Subscribe duplicate blocked (Type 2)", func(t *testing.T) {
-		body := `{"type": 2, "guild_id": "guild-1", "channel_id": "chan-1", "member": {"user": {"id": "user-1"}, "permissions": "16"}, "data": {"name": "subscribe", "options": [{"name": "game", "value": "wow"}, {"name": "server", "value": "illidan"}, {"name": "role", "value": "123"}]}}`
+		body := `{"type": 2, "guild_id": "guild-1", "channel_id": "chan-1", "member": {"user": {"id": "user-1"}, "permissions": "16"}, "data": {"name": "subscribe", "options": [{"name": "game", "value": "wow"}, {"name": "region", "value": "us"}, {"name": "server", "value": "illidan"}, {"name": "role", "value": "123"}]}}`
 		timestamp := discordSigTS(t)
 		sig := hex.EncodeToString(ed25519.Sign(priv, []byte(timestamp+body)))
 
@@ -192,8 +201,8 @@ func TestHandleRequest(t *testing.T) {
 		if !strings.Contains(discordResp.Data.Content, "Already subscribed") {
 			t.Fatalf("expected already subscribed message, got %q", discordResp.Data.Content)
 		}
-		if !strings.Contains(discordResp.Data.Content, "wow-illidan") || !strings.Contains(discordResp.Data.Content, "@Raid") {
-			t.Fatalf("expected human-readable game-server and role, got %q", discordResp.Data.Content)
+		if !strings.Contains(discordResp.Data.Content, "wow-us-illidan") || !strings.Contains(discordResp.Data.Content, "@Raid") {
+			t.Fatalf("expected human-readable game-region-server and role, got %q", discordResp.Data.Content)
 		}
 	})
 
@@ -215,8 +224,8 @@ func TestHandleRequest(t *testing.T) {
 					Mention:   "<@&123>",
 					RoleName:  "Raid",
 				},
-				body: `{"type": 2, "guild_id": "guild-1", "channel_id": "chan-1", "member": {"user": {"id": "user-1"}, "permissions": "16"}, "data": {"name": "subscribe", "options": [{"name": "game", "value": "wow"}, {"name": "server", "value": "illidan"}]}}`,
-				wantSubstr: []string{"Already subscribed", "wow-illidan", "@Raid"},
+				body:       `{"type": 2, "guild_id": "guild-1", "channel_id": "chan-1", "member": {"user": {"id": "user-1"}, "permissions": "16"}, "data": {"name": "subscribe", "options": [{"name": "game", "value": "wow"}, {"name": "region", "value": "us"}, {"name": "server", "value": "illidan"}]}}`,
+				wantSubstr: []string{"Already subscribed", "wow-us-illidan", "@Raid"},
 			},
 			{
 				name: "existing channel-wide, subscribe with role",
@@ -227,8 +236,8 @@ func TestHandleRequest(t *testing.T) {
 					Mention:   "",
 					RoleName:  "",
 				},
-				body: `{"type": 2, "guild_id": "guild-1", "channel_id": "chan-1", "member": {"user": {"id": "user-1"}, "permissions": "16"}, "data": {"name": "subscribe", "options": [{"name": "game", "value": "wow"}, {"name": "server", "value": "illidan"}, {"name": "role", "value": "123"}]}}`,
-				wantSubstr: []string{"Already subscribed", "wow-illidan"},
+				body:       `{"type": 2, "guild_id": "guild-1", "channel_id": "chan-1", "member": {"user": {"id": "user-1"}, "permissions": "16"}, "data": {"name": "subscribe", "options": [{"name": "game", "value": "wow"}, {"name": "region", "value": "us"}, {"name": "server", "value": "illidan"}, {"name": "role", "value": "123"}]}}`,
+				wantSubstr: []string{"Already subscribed", "wow-us-illidan"},
 			},
 		}
 
@@ -311,8 +320,8 @@ func TestHandleRequest(t *testing.T) {
 		}
 		var discordResp discord.InteractionResponse
 		json.Unmarshal([]byte(resp.Body), &discordResp)
-		if !strings.Contains(discordResp.Data.Content, "Unsubscribed") || !strings.Contains(discordResp.Data.Content, "wow-illidan") {
-			t.Fatalf("expected unsubscribe wording, got %q", discordResp.Data.Content)
+		if !strings.Contains(discordResp.Data.Content, "Unsubscribed") || !strings.Contains(discordResp.Data.Content, "wow-us-illidan") {
+			t.Fatalf("expected unsubscribe wording with region label, got %q", discordResp.Data.Content)
 		}
 	})
 
@@ -381,8 +390,8 @@ func TestHandleRequest(t *testing.T) {
 		if !strings.Contains(discordResp.Data.Content, "<#chan-1>") {
 			t.Fatalf("expected channel grouping, got %q", discordResp.Data.Content)
 		}
-		if !strings.Contains(discordResp.Data.Content, "wow-illidan") {
-			t.Fatalf("expected human server label, got %q", discordResp.Data.Content)
+		if !strings.Contains(discordResp.Data.Content, "wow-us-illidan") {
+			t.Fatalf("expected human server label with region, got %q", discordResp.Data.Content)
 		}
 	})
 
@@ -419,7 +428,7 @@ func TestHandleRequest(t *testing.T) {
 	})
 
 	t.Run("Autocomplete game focused (Type 4)", func(t *testing.T) {
-		body := `{"type": 4, "guild_id": "guild-1", "data": {"name": "subscribe", "options": [{"type": 3, "name": "game", "value": "w", "focused": true}, {"type": 3, "name": "server"}]}}`
+		body := `{"type": 4, "guild_id": "guild-1", "data": {"name": "subscribe", "options": [{"type": 3, "name": "game", "value": "w", "focused": true}, {"type": 3, "name": "region"}, {"type": 3, "name": "server"}]}}`
 		timestamp := discordSigTS(t)
 		sig := hex.EncodeToString(ed25519.Sign(priv, []byte(timestamp+body)))
 
@@ -451,6 +460,91 @@ func TestHandleRequest(t *testing.T) {
 		}
 		if discordResp.Data.Choices[0].Value != "wipe" || discordResp.Data.Choices[1].Value != "wow" {
 			t.Fatalf("unexpected choices: %#v", discordResp.Data.Choices)
+		}
+	})
+
+	t.Run("Autocomplete region focused (Type 4)", func(t *testing.T) {
+		body := `{"type": 4, "guild_id": "guild-1", "data": {"name": "subscribe", "options": [{"type": 3, "name": "game", "value": "wow"}, {"type": 3, "name": "region", "value": "u", "focused": true}, {"type": 3, "name": "server"}]}}`
+		timestamp := discordSigTS(t)
+		sig := hex.EncodeToString(ed25519.Sign(priv, []byte(timestamp+body)))
+
+		resp, err := handler.HandleRequest(context.Background(), events.LambdaFunctionURLRequest{
+			Headers: map[string]string{
+				"x-signature-ed25519":   sig,
+				"x-signature-timestamp": timestamp,
+			},
+			Body: body,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", resp.StatusCode, resp.Body)
+		}
+		var discordResp discord.InteractionResponse
+		if err := json.Unmarshal([]byte(resp.Body), &discordResp); err != nil {
+			t.Fatal(err)
+		}
+		if discordResp.Type != discord.InteractionResponseTypeApplicationCommandAutocompleteResult {
+			t.Fatalf("expected autocomplete type 8, got %d", discordResp.Type)
+		}
+		// wow only has "us" region in test mapping; prefix "u" should match it
+		if len(discordResp.Data.Choices) != 1 || discordResp.Data.Choices[0].Value != "us" {
+			t.Fatalf("expected [us] for prefix u, got %#v", discordResp.Data.Choices)
+		}
+	})
+
+	t.Run("Autocomplete server focused with game+region (Type 4)", func(t *testing.T) {
+		body := `{"type": 4, "guild_id": "guild-1", "data": {"name": "subscribe", "options": [{"type": 3, "name": "game", "value": "wow"}, {"type": 3, "name": "region", "value": "us"}, {"type": 3, "name": "server", "value": "ill", "focused": true}]}}`
+		timestamp := discordSigTS(t)
+		sig := hex.EncodeToString(ed25519.Sign(priv, []byte(timestamp+body)))
+
+		resp, err := handler.HandleRequest(context.Background(), events.LambdaFunctionURLRequest{
+			Headers: map[string]string{
+				"x-signature-ed25519":   sig,
+				"x-signature-timestamp": timestamp,
+			},
+			Body: body,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", resp.StatusCode, resp.Body)
+		}
+		var discordResp discord.InteractionResponse
+		if err := json.Unmarshal([]byte(resp.Body), &discordResp); err != nil {
+			t.Fatal(err)
+		}
+		if len(discordResp.Data.Choices) != 1 || discordResp.Data.Choices[0].Value != "illidan" {
+			t.Fatalf("expected [illidan], got %#v", discordResp.Data.Choices)
+		}
+	})
+
+	t.Run("Autocomplete server focused without region (Type 4)", func(t *testing.T) {
+		body := `{"type": 4, "guild_id": "guild-1", "data": {"name": "subscribe", "options": [{"type": 3, "name": "game", "value": "wow"}, {"type": 3, "name": "server", "value": "ill", "focused": true}]}}`
+		timestamp := discordSigTS(t)
+		sig := hex.EncodeToString(ed25519.Sign(priv, []byte(timestamp+body)))
+
+		resp, err := handler.HandleRequest(context.Background(), events.LambdaFunctionURLRequest{
+			Headers: map[string]string{
+				"x-signature-ed25519":   sig,
+				"x-signature-timestamp": timestamp,
+			},
+			Body: body,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", resp.StatusCode, resp.Body)
+		}
+		var discordResp discord.InteractionResponse
+		if err := json.Unmarshal([]byte(resp.Body), &discordResp); err != nil {
+			t.Fatal(err)
+		}
+		if len(discordResp.Data.Choices) != 0 {
+			t.Fatalf("expected empty choices without region, got %#v", discordResp.Data.Choices)
 		}
 	})
 
@@ -496,7 +590,7 @@ func TestHandleRequest(t *testing.T) {
 	})
 
 	t.Run("Servers short list (Type 2)", func(t *testing.T) {
-		body := `{"type": 2, "guild_id": "guild-1", "data": {"name": "servers", "options": [{"name": "game", "value": "wipe"}]}}`
+		body := `{"type": 2, "guild_id": "guild-1", "data": {"name": "servers", "options": [{"name": "game", "value": "wipe"}, {"name": "region", "value": "us"}]}}`
 		timestamp := discordSigTS(t)
 		sig := hex.EncodeToString(ed25519.Sign(priv, []byte(timestamp+body)))
 
@@ -542,7 +636,7 @@ func TestHandleRequest(t *testing.T) {
 			statusCache:      newStatusResultCache(),
 		}
 
-		statusBody := `{"type": 2, "guild_id": "guild-1", "member": {"user": {"id": "user-status-1"}}, "data": {"name": "status", "options": [{"name": "game", "value": "wow"}, {"name": "server", "value": "illidan"}]}}`
+		statusBody := `{"type": 2, "guild_id": "guild-1", "member": {"user": {"id": "user-status-1"}}, "data": {"name": "status", "options": [{"name": "game", "value": "wow"}, {"name": "region", "value": "us"}, {"name": "server", "value": "illidan"}]}}`
 		timestamp := discordSigTS(t)
 		sig := hex.EncodeToString(ed25519.Sign(priv, []byte(timestamp+statusBody)))
 
@@ -560,8 +654,8 @@ func TestHandleRequest(t *testing.T) {
 		}
 		var discordResp discord.InteractionResponse
 		json.Unmarshal([]byte(resp.Body), &discordResp)
-		if !strings.Contains(discordResp.Data.Content, "**wow-illidan** is **UP**") {
-			t.Fatalf("expected status line, got %q", discordResp.Data.Content)
+		if !strings.Contains(discordResp.Data.Content, "**wow-us-illidan** is **UP**") {
+			t.Fatalf("expected status line with region, got %q", discordResp.Data.Content)
 		}
 		if getCalls != 1 {
 			t.Fatalf("expected 1 GetServerStatus call, got %d", getCalls)
@@ -598,7 +692,7 @@ func TestHandleRequest(t *testing.T) {
 			statusCache:      newStatusResultCache(),
 		}
 
-		statusBody := `{"type": 2, "guild_id": "guild-1", "member": {"user": {"id": "user-rate-1"}}, "data": {"name": "status", "options": [{"name": "game", "value": "wow"}, {"name": "server", "value": "illidan"}]}}`
+		statusBody := `{"type": 2, "guild_id": "guild-1", "member": {"user": {"id": "user-rate-1"}}, "data": {"name": "status", "options": [{"name": "game", "value": "wow"}, {"name": "region", "value": "us"}, {"name": "server", "value": "illidan"}]}}`
 		for i := 0; i < statusPerUserLimit; i++ {
 			ts := discordSigTS(t)
 			sig := hex.EncodeToString(ed25519.Sign(priv, []byte(ts+statusBody)))
@@ -630,33 +724,6 @@ func TestHandleRequest(t *testing.T) {
 		}
 		if getCalls != before {
 			t.Fatalf("rate limited request should not call GetServerStatus; calls %d -> %d", before, getCalls)
-		}
-	})
-
-	t.Run("Autocomplete server focused without game (Type 4)", func(t *testing.T) {
-		body := `{"type": 4, "guild_id": "guild-1", "data": {"name": "subscribe", "options": [{"type": 3, "name": "server", "value": "ill", "focused": true}]}}`
-		timestamp := discordSigTS(t)
-		sig := hex.EncodeToString(ed25519.Sign(priv, []byte(timestamp+body)))
-
-		resp, err := handler.HandleRequest(context.Background(), events.LambdaFunctionURLRequest{
-			Headers: map[string]string{
-				"x-signature-ed25519":   sig,
-				"x-signature-timestamp": timestamp,
-			},
-			Body: body,
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("expected 200, got %d: %s", resp.StatusCode, resp.Body)
-		}
-		var discordResp discord.InteractionResponse
-		if err := json.Unmarshal([]byte(resp.Body), &discordResp); err != nil {
-			t.Fatal(err)
-		}
-		if len(discordResp.Data.Choices) != 0 {
-			t.Fatalf("expected empty choices without game, got %#v", discordResp.Data.Choices)
 		}
 	})
 }
