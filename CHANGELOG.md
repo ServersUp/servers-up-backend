@@ -4,7 +4,7 @@ All notable user-facing changes to ServersUp Backend will be documented in this 
 
 This changelog is intended to be readable for end users and can be published directly to the project website.
 
-## v1.0.6 — 2026-05-26
+## v1.1 — 2026-05-26
 
 ### Added
 - **`/regions`** — list regions configured for a game (e.g. `us`, `eu`, `kr`, `tw` for WoW).
