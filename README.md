@@ -111,7 +111,7 @@ Player populations cluster on certain regions and realms, so one status change c
 
 ```text
 ├── cmd/
-│   ├── bnet-polling-function/              # Lambda: polls Blizzard API for realm status
+│   ├── bnet-polling-function-us/           # Lambda: polls Blizzard API (US); logic in internal/bnetpoller
 │   ├── discord-bot-api/                    # Lambda entrypoint for Discord interactions
 │   ├── discord-guild-notify-job-creator/   # Lambda: DDB stream → SQS notify jobs
 │   ├── discord-guild-notify-lambda/        # Lambda: SQS → Discord channel messages

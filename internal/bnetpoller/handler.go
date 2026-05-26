@@ -1,24 +1,16 @@
-package main
+package bnetpoller
 
 import (
 	"context"
 	"errors"
 	"log/slog"
-	"os"
 	"sync"
 	"sync/atomic"
 
 	"github.com/ServersUp/servers-up-backend/internal/bnet"
-	"github.com/ServersUp/servers-up-backend/internal/config"
 	"github.com/ServersUp/servers-up-backend/internal/db"
-	"github.com/ServersUp/servers-up-backend/internal/logsetup"
 	"github.com/ServersUp/servers-up-backend/internal/metrics"
 	"github.com/aws/aws-lambda-go/events"
-	"github.com/aws/aws-lambda-go/lambda"
-	awsconfig "github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/aws/aws-sdk-go-v2/service/ssm"
 )
 
 type statusDB interface {
@@ -30,60 +22,69 @@ type bnetClient interface {
 	GetConnectedRealmStatus(ctx context.Context, region string, connectedRealmID int, locale string) (*bnet.ConnectedRealmResponse, error)
 }
 
-// Handler manages the dependencies and lifecycle of the polling request.
+type configLoader interface {
+	LoadJSONFromS3(ctx context.Context, bucket, key string, target any) error
+}
+
+// Deps holds all dependencies for a Battle.net polling handler. AWS wiring and
+// secret resolution are handled by LoadFromEnv; use New directly for pure injection.
+type Deps struct {
+	ConfigLoader     configLoader
+	StatusDB         statusDB
+	BnetClientID     string
+	BnetClientSecret string
+	ConfigBucket     string
+	ConfigKey        string
+}
+
+// Handler manages dependencies and lifecycle for a Battle.net polling Lambda.
 type Handler struct {
-	configProvider *config.Provider
+	configBucket   string
+	configKey      string
+	configProvider configLoader
 	database       statusDB
 	bnetClientID   string
 	bnetSecret     string
 }
 
-// NewHandler loads AWS clients and secrets; on failure it logs and exits (see main).
-func NewHandler(ctx context.Context) *Handler {
-	cfg, err := awsconfig.LoadDefaultConfig(ctx)
-	if err != nil {
-		slog.Error("unable to load AWS SDK config", "error", err)
-		os.Exit(1)
+// New constructs a Handler from fully-resolved dependencies. It returns an error
+// rather than calling os.Exit so cmd callers can handle failures cleanly.
+func New(deps Deps) (*Handler, error) {
+	if deps.ConfigLoader == nil {
+		return nil, errors.New("bnetpoller: ConfigLoader is required")
 	}
-
-	provider := config.NewProvider(ssm.NewFromConfig(cfg), s3.NewFromConfig(cfg))
-
-	clientIDPath := os.Getenv("BNET_CLIENT_ID_PATH")
-	clientSecretPath := os.Getenv("BNET_CLIENT_SECRET_PATH")
-	if clientIDPath == "" || clientSecretPath == "" {
-		slog.Error("missing BNET_CLIENT_ID_PATH or BNET_CLIENT_SECRET_PATH")
-		os.Exit(1)
+	if deps.StatusDB == nil {
+		return nil, errors.New("bnetpoller: StatusDB is required")
 	}
-
-	clientID, err := provider.GetSecret(ctx, clientIDPath)
-	if err != nil {
-		slog.Error("failed to load bnet client id", "error", err)
-		os.Exit(1)
+	if deps.BnetClientID == "" || deps.BnetClientSecret == "" {
+		return nil, errors.New("bnetpoller: BnetClientID and BnetClientSecret are required")
 	}
-	clientSecret, err := provider.GetSecret(ctx, clientSecretPath)
-	if err != nil {
-		slog.Error("failed to load bnet client secret", "error", err)
-		os.Exit(1)
+	if deps.ConfigBucket == "" || deps.ConfigKey == "" {
+		return nil, errors.New("bnetpoller: ConfigBucket and ConfigKey are required")
 	}
-
 	return &Handler{
-		configProvider: provider,
-		database:       db.NewDatabase(dynamodb.NewFromConfig(cfg), os.Getenv("DDB_TABLE_NAME")),
-		bnetClientID:   clientID,
-		bnetSecret:     clientSecret,
-	}
+		configBucket:   deps.ConfigBucket,
+		configKey:      deps.ConfigKey,
+		configProvider: deps.ConfigLoader,
+		database:       deps.StatusDB,
+		bnetClientID:   deps.BnetClientID,
+		bnetSecret:     deps.BnetClientSecret,
+	}, nil
 }
 
 func (h *Handler) HandleRequest(ctx context.Context, event events.CloudWatchEvent) (string, error) {
+	return h.handleRequestWithClient(ctx, event, bnet.NewClient(h.bnetClientID, h.bnetSecret))
+}
+
+func (h *Handler) handleRequestWithClient(ctx context.Context, event events.CloudWatchEvent, client bnetClient) (string, error) {
 	slog.Info("Starting polling execution", "eventID", event.ID)
 
 	var bnetConfig bnet.Config
-	if err := h.configProvider.LoadJSONFromS3(ctx, os.Getenv("CONFIG_BUCKET"), os.Getenv("BNET_SERVER_CONFIG_PATH"), &bnetConfig); err != nil {
+	if err := h.configProvider.LoadJSONFromS3(ctx, h.configBucket, h.configKey, &bnetConfig); err != nil {
 		return "", err
 	}
 
-	bnetClient := bnet.NewClient(h.bnetClientID, h.bnetSecret)
-	summary, err := h.pollRealms(ctx, bnetClient, bnetConfig)
+	summary, err := h.pollRealms(ctx, client, bnetConfig)
 	if err != nil {
 		return "", err
 	}
@@ -93,11 +94,12 @@ func (h *Handler) HandleRequest(ctx context.Context, event events.CloudWatchEven
 		"up", summary.Up,
 		"down", summary.Down,
 		"errors", summary.Errors,
+		"bnetRegion", bnetConfig.Region,
 	)
 
-	metrics.EmitCount(metrics.Namespace, "PollRealmSuccess", map[string]string{"gameId": "wow"}, int64(summary.Successful))
+	metrics.EmitCount(metrics.Namespace, "PollRealmSuccess", map[string]string{"gameId": "wow", "bnetRegion": bnetConfig.Region}, int64(summary.Successful))
 	if summary.Errors > 0 {
-		metrics.EmitCount(metrics.Namespace, "PollRealmError", map[string]string{"gameId": "wow"}, int64(summary.Errors))
+		metrics.EmitCount(metrics.Namespace, "PollRealmError", map[string]string{"gameId": "wow", "bnetRegion": bnetConfig.Region}, int64(summary.Errors))
 	}
 
 	return "Polling completed successfully", nil
@@ -159,10 +161,4 @@ func (h *Handler) pollRealms(ctx context.Context, client bnetClient, bnetConfig 
 
 	wg.Wait()
 	return summary, nil
-}
-
-func main() {
-	logsetup.ConfigureDefaultFromEnv()
-	handler := NewHandler(context.Background())
-	lambda.Start(handler.HandleRequest)
 }
