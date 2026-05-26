@@ -53,7 +53,7 @@ Example poller file shape (`bnet-servers-config-tw.json`):
 
 To regenerate poller configs and `server-mapping.json` from Battle.net (localized names per region locale), run the gitignored maintainer tool:
 
-`go run ./scripts/generate-bnet-configs -out-dir <dir>` with `BNET_CLIENT_ID` and `BNET_CLIENT_SECRET` set. It writes `bnet-servers-config-<region>.json` plus `server-mapping.json` using [`internal/bnet`](../internal/bnet) (`BuildRealmConfigs`, `DefaultWoWRegionEndpoints`) and [`internal/servermap`](../internal/servermap).
+`go run ./scripts/generate-bnet-configs` (from repo root) with `BNET_CLIENT_ID` and `BNET_CLIENT_SECRET` set. It writes `config-out/bnet-servers-config-<region>.json` plus `config-out/server-mapping.json` using [`internal/bnet`](../internal/bnet) (`BuildRealmConfigs`, `DefaultWoWRegionEndpoints`) and [`internal/servermap`](../internal/servermap).
 
 ## Future: unified catalog
 

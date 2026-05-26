@@ -34,7 +34,7 @@ func NewClient(clientID, clientSecret string) *Client {
 }
 
 // Authenticate obtains an OAuth2 access token from Battle.net.
-// This token is required for all subsequent data requests.
+// Game data requests must pass the token via Authorization: Bearer, not query params.
 func (c *Client) Authenticate(ctx context.Context) error {
 	data := url.Values{}
 	data.Set("grant_type", "client_credentials")
@@ -107,8 +107,8 @@ func (c *Client) GetConnectedRealmStatus(ctx context.Context, region string, con
 // RegionEndpoint describes how to reach the WoW Game Data API for a Battle.net region.
 type RegionEndpoint struct {
 	Scheme       string // https in production; http for tests
-	APIHost      string // e.g. us.api.blizzard.com (KR/TW use us host with region query param)
-	APISubregion string // optional &region= query value (kr, tw)
+	APIHost      string // regional host, e.g. kr.api.blizzard.com
+	APISubregion string // optional &region= when routing via us.api (legacy); prefer regional APIHost
 	Namespace    string // e.g. dynamic-eu
 	Locale       string // e.g. en_GB
 }
@@ -120,13 +120,13 @@ func (ep RegionEndpoint) apiScheme() string {
 	return "https"
 }
 
-// DefaultWoWRegionEndpoints matches Blizzard's regional API layout for retail WoW.
+// DefaultWoWRegionEndpoints matches Blizzard's regional API subdomains for retail WoW.
 func DefaultWoWRegionEndpoints() map[string]RegionEndpoint {
 	return map[string]RegionEndpoint{
 		"us": {APIHost: "us.api.blizzard.com", Namespace: "dynamic-us", Locale: "en_US"},
 		"eu": {APIHost: "eu.api.blizzard.com", Namespace: "dynamic-eu", Locale: "en_GB"},
-		"kr": {APIHost: "us.api.blizzard.com", Namespace: "dynamic-kr", Locale: "ko_KR", APISubregion: "kr"},
-		"tw": {APIHost: "us.api.blizzard.com", Namespace: "dynamic-tw", Locale: "zh_TW", APISubregion: "tw"},
+		"kr": {APIHost: "kr.api.blizzard.com", Namespace: "dynamic-kr", Locale: "ko_KR"},
+		"tw": {APIHost: "tw.api.blizzard.com", Namespace: "dynamic-tw", Locale: "zh_TW"},
 	}
 }
 
@@ -238,6 +238,7 @@ func (c *Client) getConnectedRealmByHref(ctx context.Context, ep RegionEndpoint,
 		return nil, err
 	}
 	q := u.Query()
+	q.Del("access_token")
 	if q.Get("locale") == "" {
 		q.Set("locale", ep.Locale)
 	}
