@@ -37,3 +37,9 @@ go.work.sum
 
 # Local agent context (not shared via git)
 AGENTS.md
+
+# Local maintainer scripts (not shared via git)
+scripts/
+
+# Generated Battle.net / server-mapping JSON from scripts/generate-bnet-configs
+config-out/
