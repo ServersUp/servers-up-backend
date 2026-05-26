@@ -1,0 +1,9 @@
+type: lambda
+function_names:
+  - BNetPollingLambda
+  - BNetPollingLambdaEU
+  - BNetPollingLambdaKR
+  - BNetPollingLambdaTW
+regions:
+  - name: us-east-1
+    alias: production

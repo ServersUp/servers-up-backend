@@ -17,12 +17,6 @@ type TargetConfig struct {
 	Meta         map[string]any `yaml:"meta,omitempty" json:"meta,omitempty"`
 }
 
-// DeploymentConfig defines the schema for the multi-region deployment manifest.
-type DeploymentConfig struct {
-	FunctionName string         `yaml:"function_name" json:"-"`
-	Targets      []TargetConfig `yaml:"regions" json:"-"` // Using 'regions' as the YAML key for backward compatibility
-}
-
 func main() {
 	if len(os.Args) < 2 {
 		slog.Error("usage: config-reader <config-path> [lambda-id]")
@@ -46,12 +40,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Build the deployment matrix by injecting global properties into each target.
-	var deploymentMatrix []TargetConfig
-	for _, target := range cfg.Targets {
-		target.FunctionName = cfg.FunctionName
-		target.LambdaID = lambdaID
-		deploymentMatrix = append(deploymentMatrix, target)
+	deploymentMatrix, err := BuildDeploymentMatrix(cfg, lambdaID)
+	if err != nil {
+		slog.Error("failed to build deployment matrix", "error", err)
+		os.Exit(1)
 	}
 
 	jsonOutput, err := json.Marshal(deploymentMatrix)

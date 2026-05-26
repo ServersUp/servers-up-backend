@@ -6,7 +6,7 @@ Discord commands (`/subscribe`, `/games`, `/servers`, `/status`, autocomplete, n
 
 ## Battle.net polling config (separate today)
 
-Regional Battle.net poller Lambdas (e.g. [`bnet-polling-function-us`](../cmd/bnet-polling-function-us/)) are thin entrypoints over [`internal/bnetpoller`](../internal/bnetpoller/). Each cmd calls `bnetpoller.LoadFromEnv` to read env vars, wire AWS clients, and resolve SSM secrets, then starts the handler. Config loaded: a **separate** S3 JSON (`BNET_SERVER_CONFIG_PATH`) with region, locale, and a `realms[]` list (`connected_realm_id`, etc.). Status is written to the status DynamoDB table (`DDB_TABLE_NAME`).
+Regional Battle.net poller Lambdas share one entrypoint ([`bnet-polling-function`](../cmd/bnet-polling-function/)) over [`internal/bnetpoller`](../internal/bnetpoller/). The cmd calls `bnetpoller.LoadFromEnv` to read env vars, wire AWS clients, and resolve SSM secrets, then starts the handler. CI builds once and deploys the same binary to `BNetPollingLambda`, `BNetPollingLambdaEU`, `BNetPollingLambdaKR`, and `BNetPollingLambdaTW` (see `function_names` in `deployment-config.yaml`). Each AWS function loads a **separate** S3 JSON (`BNET_SERVER_CONFIG_PATH`) with region, locale, and `realms[]`—Terraform sets a distinct path per function. Status is written to the status DynamoDB table (`DDB_TABLE_NAME`).
 
 ## Future: unified catalog
 

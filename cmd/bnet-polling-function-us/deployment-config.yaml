@@ -1,5 +1,0 @@
-type: lambda
-function_name: BNetPollingLambda
-regions:
-  - name: us-east-1
-    alias: production

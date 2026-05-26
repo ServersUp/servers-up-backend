@@ -93,7 +93,7 @@ jobs:
           # Loop through discovered lambdas and merge their configurations
           for lambda in ${{ join(fromJson(needs.setup.outputs.lambdas), ' ') }}; do
             echo "Processing config for: $lambda"
-            JSON=$(go run ./cmd/config-reader/main.go "./cmd/$lambda/deployment-config.yaml" "$lambda")
+            JSON=$(go run ./cmd/config-reader/ "./cmd/$lambda/deployment-config.yaml" "$lambda")
             COMBINED_JSON=$(echo "$COMBINED_JSON $JSON" | jq -s 'add' -c)
           done
 
