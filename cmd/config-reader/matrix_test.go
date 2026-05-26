@@ -65,6 +65,28 @@ func TestBuildDeploymentMatrix_rejectsBothNameFields(t *testing.T) {
 	}
 }
 
+func TestBuildDeploymentMatrix_rejectsEmptyFunctionName(t *testing.T) {
+	t.Parallel()
+	_, err := BuildDeploymentMatrix(DeploymentConfig{
+		FunctionName: "  ",
+		Targets:      []TargetConfig{{Name: "us-east-1"}},
+	}, "id")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestBuildDeploymentMatrix_rejectsEmptyFunctionNamesEntry(t *testing.T) {
+	t.Parallel()
+	_, err := BuildDeploymentMatrix(DeploymentConfig{
+		FunctionNames: []string{"A", ""},
+		Targets:       []TargetConfig{{Name: "us-east-1"}},
+	}, "id")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
 func TestBuildDeploymentMatrix_requiresFunctionName(t *testing.T) {
 	t.Parallel()
 	_, err := BuildDeploymentMatrix(DeploymentConfig{

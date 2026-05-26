@@ -1,6 +1,9 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // DeploymentConfig defines the schema for the multi-region deployment manifest.
 type DeploymentConfig struct {
@@ -16,9 +19,17 @@ func (cfg DeploymentConfig) resolvedFunctionNames() ([]string, error) {
 		return nil, fmt.Errorf("deployment config: set function_name or function_names, not both")
 	}
 	if hasMulti {
+		for i, name := range cfg.FunctionNames {
+			if strings.TrimSpace(name) == "" {
+				return nil, fmt.Errorf("deployment config: function_names[%d] must not be empty", i)
+			}
+		}
 		return cfg.FunctionNames, nil
 	}
 	if hasSingle {
+		if strings.TrimSpace(cfg.FunctionName) == "" {
+			return nil, fmt.Errorf("deployment config: function_name must not be empty")
+		}
 		return []string{cfg.FunctionName}, nil
 	}
 	return nil, fmt.Errorf("deployment config: function_name or function_names is required")
