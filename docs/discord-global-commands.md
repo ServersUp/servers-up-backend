@@ -28,6 +28,8 @@ curl -sS -X PUT \
 
 See [`discord-global-commands.json`](discord-global-commands.json) in this directory.
 
+**Region option** — `region` is a string with autocomplete; allowed values come from `server-mapping.json` per game (WoW: `us`, `eu`, `kr`, `tw`; FFXIV: `na`, `eu`, `jp`, `oce`). The JSON `description` fields are hints only; run the PUT above after changing them.
+
 ## Verify
 
 ```bash
