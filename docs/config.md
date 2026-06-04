@@ -55,6 +55,43 @@ To regenerate poller configs and `server-mapping.json` from Battle.net (localize
 
 `go run ./scripts/generate-bnet-configs` (from repo root) with `BNET_CLIENT_ID` and `BNET_CLIENT_SECRET` set. It writes `config-out/bnet-servers-config-<region>.json` plus `config-out/server-mapping.json` using [`internal/bnet`](../internal/bnet) (`BuildRealmConfigs`, `DefaultWoWRegionEndpoints`) and [`internal/servermap`](../internal/servermap).
 
+## FFXIV config (Lodestone world status)
+
+FFXIV catalog data is generated from the official Lodestone world status page (HTML scrape; no API key). Parser lives in [`internal/ffxivlodestone`](../internal/ffxivlodestone/).
+
+From repo root:
+
+```bash
+go run ./scripts/generate-ffxiv-configs
+```
+
+**Outputs** under `config-out/`:
+
+- `ffxiv-lodestone-config.json` — poller catalog (`lodestone_url`, `polling_interval_seconds`, `regions` with `worlds[]` of `slug` + exact `name`)
+- `server-mapping.json` — adds or updates `games.ffxiv` while **preserving** other games (e.g. `wow`) if the file already exists
+
+**Flags:** `-lodestone-url`, `-game`, `-provider`, `-regions` (default `na,eu,jp,oce`), `-polling-interval`, `-output-dir`, `-mapping-file`, `-mapping-only-ffxiv`, `-dry-run`.
+
+**Conventions:**
+
+- Game id `ffxiv` (no hyphens in game ids).
+- Provider `lodestone`; future status `serverId` = `lodestone#region#<WorldName>` (identifier is the exact Lodestone world name, e.g. `Gilgamesh`).
+- Physical regions: `na`, `eu`, `jp`, `oce` (from HTML tab panels, not from visible UI tab).
+- Discord `ServerLabel` = `ffxiv-<region>-<slug>` (e.g. `ffxiv-na-gilgamesh`).
+
+**Maintainer workflow:** run `generate-bnet-configs` and/or `generate-ffxiv-configs`; the FFXIV script merges into existing `config-out/server-mapping.json` by default. Upload the merged mapping to S3 when ready.
+
+Example `games.ffxiv` fragment:
+
+```json
+"ffxiv": {
+  "provider": "lodestone",
+  "regions": {
+    "na": { "servers": { "gilgamesh": { "identifier": "Gilgamesh" } } }
+  }
+}
+```
+
 ## Future: unified catalog
 
 When additional poller Lambdas exist (API, scraper, pinger), the intended model is:
