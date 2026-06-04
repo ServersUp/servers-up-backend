@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"slices"
 	"time"
 )
 
@@ -29,6 +30,7 @@ func emitTo(w io.Writer, namespace, metricName, unit string, dimensions map[stri
 	for k := range dimensions {
 		dimKeys = append(dimKeys, k)
 	}
+	slices.Sort(dimKeys)
 
 	root := map[string]any{
 		"_aws": map[string]any{
