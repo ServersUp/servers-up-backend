@@ -1,0 +1,5 @@
+type: lambda
+function_name: FFXIVPollingLambda
+regions:
+  - name: us-east-1
+    alias: production
