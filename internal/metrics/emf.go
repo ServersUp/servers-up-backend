@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"encoding/json"
+	"io"
 	"os"
 	"time"
 )
@@ -15,10 +16,11 @@ const Namespace = "ServersUp"
 //
 // Keep dimensions low-cardinality (e.g. gameId) to control cost.
 func EmitCount(namespace, metricName string, dimensions map[string]string, value int64) {
-	emit(namespace, metricName, "Count", dimensions, value)
+	emitTo(os.Stdout, namespace, metricName, "Count", dimensions, value)
 }
 
-func emit(namespace, metricName, unit string, dimensions map[string]string, value int64) {
+// emitTo is the implementation used by EmitCount and by tests.
+func emitTo(w io.Writer, namespace, metricName, unit string, dimensions map[string]string, value int64) {
 	if namespace == "" || metricName == "" {
 		return
 	}
@@ -55,5 +57,5 @@ func emit(namespace, metricName, unit string, dimensions map[string]string, valu
 	if err != nil {
 		return
 	}
-	_, _ = os.Stdout.Write(append(b, '\n'))
+	_, _ = w.Write(append(b, '\n'))
 }

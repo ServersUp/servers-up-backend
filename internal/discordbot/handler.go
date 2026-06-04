@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"os"
@@ -67,6 +68,56 @@ const (
 	defaultServerMappingKey = "server-mapping.json"
 	channelNamesCacheTTL    = 2 * time.Minute
 )
+
+// HandlerDeps holds fully resolved dependencies for a discordbot Handler.
+// All fields except StatusStore, HTTPClient, DiscordBotToken, MappingCache,
+// StatusLimiter and StatusCache are required.
+type HandlerDeps struct {
+	Database         Database
+	StatusStore      StatusStore
+	ConfigProvider   ConfigProvider
+	DiscordPublicKey string
+	HTTPClient       *http.Client
+	DiscordBotToken  string
+	MappingCache     *servermap.CachedMapping
+	StatusLimiter    *statusRateLimiter
+	StatusCache      *statusResultCache
+}
+
+// NewHandlerFromDeps constructs a Handler from pre-resolved dependencies.
+// Optional fields (StatusStore, HTTPClient, MappingCache, StatusLimiter, StatusCache)
+// receive safe defaults when nil/zero.
+func NewHandlerFromDeps(deps HandlerDeps) (*Handler, error) {
+	if deps.Database == nil {
+		return nil, errors.New("discordbot: Database is required")
+	}
+	if deps.ConfigProvider == nil {
+		return nil, errors.New("discordbot: ConfigProvider is required")
+	}
+	if deps.DiscordPublicKey == "" {
+		return nil, errors.New("discordbot: DiscordPublicKey is required")
+	}
+	if deps.MappingCache == nil {
+		deps.MappingCache = servermap.NewCachedMapping(0)
+	}
+	if deps.StatusLimiter == nil {
+		deps.StatusLimiter = newStatusRateLimiter()
+	}
+	if deps.StatusCache == nil {
+		deps.StatusCache = newStatusResultCache()
+	}
+	return &Handler{
+		database:         deps.Database,
+		statusStore:      deps.StatusStore,
+		configProvider:   deps.ConfigProvider,
+		discordPublicKey: deps.DiscordPublicKey,
+		httpClient:       deps.HTTPClient,
+		discordBotToken:  deps.DiscordBotToken,
+		mappingCache:     deps.MappingCache,
+		statusLimiter:    deps.StatusLimiter,
+		statusCache:      deps.StatusCache,
+	}, nil
+}
 
 func NewHandler(ctx context.Context) *Handler {
 	cfg, err := awsconfig.LoadDefaultConfig(ctx)

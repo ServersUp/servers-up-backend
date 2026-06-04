@@ -3,8 +3,10 @@ package bnetpoller
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/ServersUp/servers-up-backend/internal/bnet"
 	"github.com/ServersUp/servers-up-backend/internal/db"
@@ -97,6 +99,123 @@ func TestPollRealms_unchangedStatusStillSuccess(t *testing.T) {
 	}
 	if summary.Successful != 1 || summary.Down != 1 {
 		t.Fatalf("summary: %+v", summary)
+	}
+}
+
+func TestPollRealms_authFailReturnsError(t *testing.T) {
+	t.Parallel()
+	h := &Handler{database: &fakeDB{}}
+	cfg := bnet.Config{
+		Region: "us",
+		Locale: "en_US",
+		Realms: []bnet.RealmConfig{{Name: "a", ConnectedRealmID: 1}},
+	}
+
+	_, err := h.pollRealms(context.Background(), &fakeBnet{authErr: errors.New("auth failed")}, cfg)
+	if err == nil {
+		t.Fatal("expected error from authenticate failure")
+	}
+}
+
+func TestPollRealms_dbSaveErrorIncrementsErrors(t *testing.T) {
+	t.Parallel()
+	h := &Handler{database: &fakeDB{err: errors.New("dynamodb error")}}
+	cfg := bnet.Config{
+		Region: "us",
+		Locale: "en_US",
+		Realms: []bnet.RealmConfig{{Name: "a", ConnectedRealmID: 1}},
+	}
+
+	summary, err := h.pollRealms(context.Background(), &fakeBnet{status: "UP"}, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.Errors != 1 || summary.Successful != 0 {
+		t.Fatalf("expected 1 error and 0 success for non-ErrStatusUnchanged DB error, got %+v", summary)
+	}
+}
+
+func TestPollRealms_statusTaxonomy(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		status     string
+		wantUp     int32
+		wantDown   int32
+		wantOther  int32
+	}{
+		{"UP", 1, 0, 0},
+		{"DOWN", 0, 1, 0},
+		{"MAINTENANCE", 0, 0, 1},
+		{"", 0, 0, 1},
+	}
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.status, func(t *testing.T) {
+			t.Parallel()
+			h := &Handler{database: &fakeDB{}}
+			cfg := bnet.Config{
+				Region: "us",
+				Realms: []bnet.RealmConfig{{Name: "r", ConnectedRealmID: 1}},
+			}
+			summary, err := h.pollRealms(context.Background(), &fakeBnet{status: tc.status}, cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if summary.Up != tc.wantUp {
+				t.Errorf("Up: got %d want %d", summary.Up, tc.wantUp)
+			}
+			if summary.Down != tc.wantDown {
+				t.Errorf("Down: got %d want %d", summary.Down, tc.wantDown)
+			}
+			other := summary.Successful - summary.Up - summary.Down
+			if other != tc.wantOther {
+				t.Errorf("other: got %d want %d (summary=%+v)", other, tc.wantOther, summary)
+			}
+		})
+	}
+}
+
+// blockingFakeBnet is a bnetClient that blocks GetConnectedRealmStatus until ctx is done.
+type blockingFakeBnet struct{}
+
+func (b *blockingFakeBnet) Authenticate(ctx context.Context) error { return nil }
+
+func (b *blockingFakeBnet) GetConnectedRealmStatus(ctx context.Context, region string, connectedRealmID int, locale string) (*bnet.ConnectedRealmResponse, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestPollRealms_contextCancel_doesNotHang(t *testing.T) {
+	t.Parallel()
+
+	h := &Handler{database: &fakeDB{}}
+	realms := make([]bnet.RealmConfig, 5)
+	for i := range realms {
+		realms[i] = bnet.RealmConfig{Name: fmt.Sprintf("r%d", i), ConnectedRealmID: i + 1}
+	}
+	cfg := bnet.Config{Region: "us", Locale: "en_US", Realms: realms}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	type result struct {
+		summary pollSummary
+		err     error
+	}
+	done := make(chan result, 1)
+	go func() {
+		s, err := h.pollRealms(ctx, &blockingFakeBnet{}, cfg)
+		done <- result{s, err}
+	}()
+
+	// Give goroutines a moment to start blocking, then cancel.
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+
+	select {
+	case <-done:
+		// pollRealms completed after cancel — pass.
+	case <-time.After(2 * time.Second):
+		t.Fatal("pollRealms did not complete within 2 s after context cancel")
 	}
 }
 

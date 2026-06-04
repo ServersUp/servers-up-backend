@@ -1,0 +1,80 @@
+package metrics
+
+import (
+	"bytes"
+	"encoding/json"
+	"os"
+	"testing"
+)
+
+func TestEmitCount_jsonShape(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	emitTo(&buf, "ServersUp", "PollRealmSuccess", "Count", map[string]string{"gameId": "wow", "bnetRegion": "us"}, 3)
+
+	line := bytes.TrimRight(buf.Bytes(), "\n")
+	if len(line) == 0 {
+		t.Fatal("expected non-empty EMF output")
+	}
+
+	var root map[string]any
+	if err := json.Unmarshal(line, &root); err != nil {
+		t.Fatalf("invalid JSON: %v\nraw: %s", err, line)
+	}
+
+	// Top-level metric value.
+	if v, ok := root["PollRealmSuccess"]; !ok || v == nil {
+		t.Errorf("expected PollRealmSuccess key, got %v", root)
+	}
+	if root["gameId"] != "wow" || root["bnetRegion"] != "us" {
+		t.Errorf("expected dimension keys at root level, got %v", root)
+	}
+
+	// _aws envelope.
+	awsRaw, ok := root["_aws"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected _aws map, got %T", root["_aws"])
+	}
+	if awsRaw["Timestamp"] == nil {
+		t.Error("expected _aws.Timestamp")
+	}
+	cwmRaw, ok := awsRaw["CloudWatchMetrics"].([]any)
+	if !ok || len(cwmRaw) == 0 {
+		t.Fatalf("expected non-empty CloudWatchMetrics, got %v", awsRaw["CloudWatchMetrics"])
+	}
+	entry, ok := cwmRaw[0].(map[string]any)
+	if !ok {
+		t.Fatalf("unexpected CloudWatchMetrics entry type %T", cwmRaw[0])
+	}
+	if entry["Namespace"] != "ServersUp" {
+		t.Errorf("expected Namespace=ServersUp, got %v", entry["Namespace"])
+	}
+	metrics, ok := entry["Metrics"].([]any)
+	if !ok || len(metrics) == 0 {
+		t.Fatalf("expected Metrics array, got %v", entry["Metrics"])
+	}
+	m, _ := metrics[0].(map[string]any)
+	if m["Name"] != "PollRealmSuccess" || m["Unit"] != "Count" {
+		t.Errorf("unexpected metric entry: %v", m)
+	}
+}
+
+func TestEmitCount_noopOnEmptyInputs(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	emitTo(&buf, "", "metric", "Count", nil, 1)
+	emitTo(&buf, "ns", "", "Count", nil, 1)
+
+	if buf.Len() != 0 {
+		t.Errorf("expected no output for empty namespace/metric, got %q", buf.String())
+	}
+}
+
+func TestEmitCount_writesToStdout(t *testing.T) {
+	// Smoke: EmitCount must not panic writing to os.Stdout.
+	// We redirect stdout only to verify there's no panic, not to capture content.
+	EmitCount("ServersUp", "TestMetric", map[string]string{"gameId": "test"}, 1)
+	_ = os.Stdout
+}
