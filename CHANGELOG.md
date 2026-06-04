@@ -4,6 +4,16 @@ All notable user-facing changes to ServersUp Backend will be documented in this 
 
 This changelog is intended to be readable for end users and can be published directly to the project website.
 
+## v1.2 — 2026-06-04
+
+### Added
+- **Final Fantasy XIV (FFXIV)** — subscribe to world status updates and check **UP/DOWN** with the same slash commands as WoW when FFXIV is present in the server catalog.
+- **FFXIV regions** — use **`na`**, **`eu`**, **`jp`**, and **`oce`** (not WoW’s `us` / `kr` / `tw`). Labels look like **`ffxiv-na-gilgamesh`**.
+- **`/regions`** — for FFXIV, lists `na`, `eu`, `jp`, `oce` when that game is configured.
+
+### Notes
+- FFXIV must be included in the deployed **`server-mapping.json`** and status must be polled for worlds to show live status and notifications. WoW is unchanged if the mapping still includes `games.wow`.
+
 ## v1.1 — 2026-05-26
 
 ### Added

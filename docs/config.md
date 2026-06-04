@@ -28,11 +28,11 @@ The canonical server ID written by pollers and stored in DynamoDB is `provider#r
 
 ### Discord slash commands
 
-`/subscribe`, `/status`, and `/servers` all accept a **`region`** option (`us`, `eu`, `kr`, `tw`) in addition to `game` and `server`. Autocomplete for `region` uses `ListRegions(game)` and autocomplete for `server` requires both `game` and `region` to be set first.
+`/subscribe`, `/status`, and `/servers` all accept a **`region`** option in addition to `game` and `server`. **Regions are per game** (from `games.<id>.regions` in the mapping): WoW uses `us`, `eu`, `kr`, `tw`; FFXIV uses `na`, `eu`, `jp`, `oce`. Autocomplete for `region` calls `ListRegions(game)`; `server` autocomplete requires `game` and `region` first.
 
-The display label (`ServerLabel`) stored on subscriptions and shown in notifications is `game-region-server` (e.g. `wow-eu-kazzak`).
+The display label (`ServerLabel`) stored on subscriptions and shown in notifications is `game-region-server` (e.g. `wow-eu-kazzak`, `ffxiv-na-gilgamesh`).
 
-Register slash commands with Discord’s API: see [`discord-global-commands.md`](discord-global-commands.md) and [`discord-global-commands.json`](discord-global-commands.json).
+Register slash commands with Discord’s API: see [`discord-global-commands.md`](discord-global-commands.md) and [`discord-global-commands.json`](discord-global-commands.json). Re-register when command descriptions change.
 
 ## Battle.net polling config (separate today)
 
@@ -80,6 +80,12 @@ go run ./scripts/generate-ffxiv-configs
 - Discord `ServerLabel` = `ffxiv-<region>-<slug>` (e.g. `ffxiv-na-gilgamesh`).
 
 **Maintainer workflow:** run `generate-bnet-configs` and/or `generate-ffxiv-configs`; the FFXIV script merges into existing `config-out/server-mapping.json` by default. Upload the merged mapping to S3 when ready.
+
+### FFXIV polling Lambda
+
+[`ffxiv-polling-function`](../cmd/ffxiv-polling-function/) runs as **`FFXIVPollingLambda`** via [`internal/ffxivpoller`](../internal/ffxivpoller/). Required env: `CONFIG_BUCKET`, `FFXIV_LODESTONE_CONFIG_PATH` (S3 key for `ffxiv-lodestone-config.json`), `DDB_TABLE_NAME` (same status table as Battle.net). No SSM secrets.
+
+Live status is read from Square Enix **frontier JSON** (`frontier_status_url` in config, or the default launcher feed). If the whole frontier fetch or parse fails, the poller falls back once to the **Lodestone HTML** world status page (`lodestone_url`). Catalog world names must match frontier keys exactly.
 
 Example `games.ffxiv` fragment:
 
