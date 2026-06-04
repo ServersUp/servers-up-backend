@@ -58,6 +58,79 @@ func TestEmitCount_jsonShape(t *testing.T) {
 	if m["Name"] != "PollRealmSuccess" || m["Unit"] != "Count" {
 		t.Errorf("unexpected metric entry: %v", m)
 	}
+	dims, ok := entry["Dimensions"].([]any)
+	if !ok || len(dims) == 0 {
+		t.Fatalf("expected Dimensions array, got %v", entry["Dimensions"])
+	}
+	dimRow, ok := dims[0].([]any)
+	if !ok {
+		t.Fatalf("expected dimension name row, got %T", dims[0])
+	}
+	if len(dimRow) != 2 {
+		t.Fatalf("expected 2 dimension keys, got %v", dimRow)
+	}
+	if dimRow[0] != "bnetRegion" || dimRow[1] != "gameId" {
+		t.Errorf("expected sorted dimension keys [bnetRegion gameId], got %v", dimRow)
+	}
+}
+
+func TestEmitCount_dimensionOrderDeterministic(t *testing.T) {
+	t.Parallel()
+
+	dims := map[string]string{"gameId": "wow", "bnetRegion": "us", "zebra": "z"}
+	want := []string{"bnetRegion", "gameId", "zebra"}
+
+	for i := 0; i < 3; i++ {
+		var buf bytes.Buffer
+		emitTo(&buf, "ServersUp", "M", "Count", dims, 1)
+		got := dimensionNamesFromEMF(t, buf.Bytes())
+		if len(got) != len(want) {
+			t.Fatalf("emit %d: got %d keys %v, want %v", i, len(got), got, want)
+		}
+		for j := range want {
+			if got[j] != want[j] {
+				t.Fatalf("emit %d: index %d got %q want %q (row %v)", i, j, got[j], want[j], got)
+			}
+		}
+	}
+}
+
+func dimensionNamesFromEMF(t *testing.T, raw []byte) []string {
+	t.Helper()
+	line := bytes.TrimRight(raw, "\n")
+	var root map[string]any
+	if err := json.Unmarshal(line, &root); err != nil {
+		t.Fatal(err)
+	}
+	awsRaw, ok := root["_aws"].(map[string]any)
+	if !ok {
+		t.Fatal("missing _aws")
+	}
+	cwm, ok := awsRaw["CloudWatchMetrics"].([]any)
+	if !ok || len(cwm) == 0 {
+		t.Fatal("missing CloudWatchMetrics")
+	}
+	entry, ok := cwm[0].(map[string]any)
+	if !ok {
+		t.Fatal("bad CloudWatchMetrics entry")
+	}
+	dims, ok := entry["Dimensions"].([]any)
+	if !ok || len(dims) == 0 {
+		t.Fatal("missing Dimensions")
+	}
+	row, ok := dims[0].([]any)
+	if !ok {
+		t.Fatal("bad dimension row")
+	}
+	out := make([]string, len(row))
+	for i, v := range row {
+		s, ok := v.(string)
+		if !ok {
+			t.Fatalf("dimension %d not string: %T", i, v)
+		}
+		out[i] = s
+	}
+	return out
 }
 
 func TestEmitCount_noopOnEmptyInputs(t *testing.T) {
