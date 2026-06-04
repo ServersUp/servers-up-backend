@@ -37,6 +37,7 @@ go.work.sum
 
 # Local agent context (not shared via git)
 AGENTS.md
+LOG.md
 
 # Local maintainer scripts (not shared via git)
 scripts/
