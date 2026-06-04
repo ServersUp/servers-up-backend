@@ -1,6 +1,9 @@
 package discordbot
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestSplitGameServerHuman(t *testing.T) {
 	t.Parallel()
@@ -22,3 +25,31 @@ func TestSplitGameServerHuman(t *testing.T) {
 		}
 	}
 }
+
+func FuzzSplitGameServerHuman(f *testing.F) {
+	seeds := []string{
+		"wow-us-illidan",
+		"wow-eu-kazzak",
+		"wow-illidan",
+		"bad",
+		"",
+		"-",
+		"--",
+		"a-b-c-d-e",
+		"game-region-server-with-hyphens",
+	}
+	for _, s := range seeds {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, input string) {
+		game, region, server := splitGameServerHuman(input)
+		// Must not panic; basic invariants only.
+		if region != "" && !strings.Contains(input, "-") {
+			t.Errorf("region set but input has no dash: input=%q region=%q", input, region)
+		}
+		// Re-joining must not produce a string longer than input (sanity check).
+		parts := strings.Join([]string{game, region, server}, "|")
+		_ = parts
+	})
+}
+

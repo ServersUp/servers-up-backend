@@ -275,3 +275,101 @@ func TestDeleteSubscription_notFound(t *testing.T) {
 	}
 }
 
+func TestListSubscriptionsByGuild_paginates(t *testing.T) {
+	t.Parallel()
+
+	sub1 := models.Subscription{ServerID: "battlenet#us#1", SubscriptionID: "sub-1", GuildID: "guild-1", ChannelID: "chan-1"}
+	sub2 := models.Subscription{ServerID: "battlenet#us#2", SubscriptionID: "sub-2", GuildID: "guild-1", ChannelID: "chan-2"}
+	item1, err := attributevalue.MarshalMap(sub1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item2, err := attributevalue.MarshalMap(sub2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	f := &fakeDDB{
+		queryOuts: []*dynamodb.QueryOutput{
+			{
+				Items:            []map[string]types.AttributeValue{item1},
+				LastEvaluatedKey: map[string]types.AttributeValue{"serverId": &types.AttributeValueMemberS{Value: "token"}},
+			},
+			{
+				Items: []map[string]types.AttributeValue{item2},
+			},
+		},
+	}
+	db := NewDatabase(f, "Subscriptions")
+
+	got, err := db.ListSubscriptionsByGuild(context.Background(), "guild-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 subscriptions across pages, got %d", len(got))
+	}
+	if f.queryCalls != 2 {
+		t.Fatalf("expected 2 Query calls for pagination, got %d", f.queryCalls)
+	}
+	ids := map[string]bool{got[0].SubscriptionID: true, got[1].SubscriptionID: true}
+	if !ids["sub-1"] || !ids["sub-2"] {
+		t.Fatalf("unexpected subscription IDs: %v", got)
+	}
+}
+
+func TestListSubscriptionsByServer_paginates(t *testing.T) {
+	t.Parallel()
+
+	sub1 := models.Subscription{ServerID: "battlenet#us#99", SubscriptionID: "sub-a", GuildID: "g1", ChannelID: "c1"}
+	sub2 := models.Subscription{ServerID: "battlenet#us#99", SubscriptionID: "sub-b", GuildID: "g2", ChannelID: "c2"}
+	item1, err := attributevalue.MarshalMap(sub1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item2, err := attributevalue.MarshalMap(sub2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	f := &fakeDDB{
+		queryOuts: []*dynamodb.QueryOutput{
+			{
+				Items:            []map[string]types.AttributeValue{item1},
+				LastEvaluatedKey: map[string]types.AttributeValue{"subscriptionId": &types.AttributeValueMemberS{Value: "tok"}},
+			},
+			{
+				Items: []map[string]types.AttributeValue{item2},
+			},
+		},
+	}
+	db := NewDatabase(f, "Subscriptions")
+
+	got, err := db.ListSubscriptionsByServer(context.Background(), "battlenet#us#99")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 subscriptions across pages, got %d", len(got))
+	}
+	if f.queryCalls != 2 {
+		t.Fatalf("expected 2 Query calls for pagination, got %d", f.queryCalls)
+	}
+}
+
+func TestSaveServerStatus_putError(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeDDB{putErr: errors.New("dynamodb put error")}
+	db := NewDatabase(f, "GameServerStatus")
+
+	// GetItem returns empty (no existing item), so we proceed to PutItem which fails.
+	err := db.SaveServerStatus(context.Background(), "wow", "battlenet", "us", 57, "UP")
+	if err == nil {
+		t.Fatal("expected error from PutItem failure")
+	}
+	if errors.Is(err, ErrStatusUnchanged) {
+		t.Fatal("expected a real error, not ErrStatusUnchanged")
+	}
+}
+

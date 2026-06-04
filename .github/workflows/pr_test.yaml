@@ -14,5 +14,12 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Run tests
+      - name: Vet
+        run: go vet ./...
+      - name: Run tests (linux/amd64)
+        env:
+          GOOS: linux
+          GOARCH: amd64
         run: go test ./...
+      - name: Run tests with race detector
+        run: go test -race ./...
