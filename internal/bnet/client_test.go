@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -37,6 +38,10 @@ func TestClient_Authenticate(t *testing.T) {
 
 func TestClient_GetConnectedRealmStatus(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Connection") == "close" {
+			http.Error(w, "connection close not expected", http.StatusBadRequest)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"id": 11, "status": {"type": "UP"}}`)
 	}))
@@ -53,6 +58,31 @@ func TestClient_GetConnectedRealmStatus(t *testing.T) {
 
 	if resp.Status.Type != "UP" {
 		t.Errorf("expected status UP, got %s", resp.Status.Type)
+	}
+}
+
+func TestClient_defaultHTTPClient_reusesConnections(t *testing.T) {
+	t.Parallel()
+
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"id": 11, "status": {"type": "UP"}}`)
+	}))
+	defer srv.Close()
+
+	client := NewClient("id", "secret")
+	client.token = "tok"
+	client.apiURL = srv.URL + "/%s"
+
+	for i := 0; i < 3; i++ {
+		if _, err := client.GetConnectedRealmStatus(context.Background(), "us", 11, "en_US"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if requests.Load() != 3 {
+		t.Fatalf("requests: %d", requests.Load())
 	}
 }
 
