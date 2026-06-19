@@ -151,3 +151,23 @@ func TestEmitCount_writesToStdout(t *testing.T) {
 	EmitCount("ServersUp", "TestMetric", map[string]string{"gameId": "test"}, 1)
 	_ = os.Stdout
 }
+
+func TestEmitMilliseconds_jsonShape(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	emitTo(&buf, "ServersUp", "PollDurationMs", "Milliseconds", map[string]string{"gameId": "wow", "bnetRegion": "us"}, 14000)
+
+	var root map[string]any
+	if err := json.Unmarshal(bytes.TrimRight(buf.Bytes(), "\n"), &root); err != nil {
+		t.Fatal(err)
+	}
+	if root["PollDurationMs"] != float64(14000) {
+		t.Errorf("PollDurationMs value: %v", root["PollDurationMs"])
+	}
+	cwm := root["_aws"].(map[string]any)["CloudWatchMetrics"].([]any)[0].(map[string]any)
+	metric := cwm["Metrics"].([]any)[0].(map[string]any)
+	if metric["Unit"] != "Milliseconds" {
+		t.Errorf("unit: %v", metric["Unit"])
+	}
+}

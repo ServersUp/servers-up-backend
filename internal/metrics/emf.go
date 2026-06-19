@@ -20,6 +20,11 @@ func EmitCount(namespace, metricName string, dimensions map[string]string, value
 	emitTo(os.Stdout, namespace, metricName, "Count", dimensions, value)
 }
 
+// EmitMilliseconds writes an EMF metric with unit Milliseconds (e.g. latency).
+func EmitMilliseconds(namespace, metricName string, dimensions map[string]string, value int64) {
+	emitTo(os.Stdout, namespace, metricName, "Milliseconds", dimensions, value)
+}
+
 // emitTo is the implementation used by EmitCount and by tests.
 func emitTo(w io.Writer, namespace, metricName, unit string, dimensions map[string]string, value int64) {
 	if namespace == "" || metricName == "" {

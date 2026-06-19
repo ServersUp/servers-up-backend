@@ -278,6 +278,52 @@ func TestHandleRequest_configLoadError(t *testing.T) {
 	}
 }
 
+func TestPollRealms_recordsTiming(t *testing.T) {
+	t.Parallel()
+
+	h := &Handler{database: &fakeDB{}}
+	cfg := bnet.Config{
+		Region: "us",
+		Locale: "en_US",
+		Realms: []bnet.RealmConfig{
+			{Name: "a", ConnectedRealmID: 1},
+			{Name: "b", ConnectedRealmID: 2},
+		},
+	}
+
+	summary, err := h.pollRealms(context.Background(), &slowFakeBnet{delay: 5 * time.Millisecond, status: "UP"}, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.BnetCalls != 2 || summary.DdbCalls != 2 {
+		t.Fatalf("calls: bnet=%d ddb=%d", summary.BnetCalls, summary.DdbCalls)
+	}
+	if summary.BnetMaxMs < 5 || summary.PollDurationMs < 5 {
+		t.Fatalf("expected non-zero timing, got %+v", summary)
+	}
+	if summary.BnetTotalMs < summary.BnetMaxMs {
+		t.Fatalf("bnet total should be >= max, got %+v", summary)
+	}
+}
+
+type slowFakeBnet struct {
+	delay  time.Duration
+	status string
+}
+
+func (f *slowFakeBnet) Authenticate(ctx context.Context) error { return nil }
+
+func (f *slowFakeBnet) GetConnectedRealmStatus(ctx context.Context, region string, connectedRealmID int, locale string) (*bnet.ConnectedRealmResponse, error) {
+	if f.delay > 0 {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(f.delay):
+		}
+	}
+	return &bnet.ConnectedRealmResponse{Status: bnet.Status{Type: f.status}}, nil
+}
+
 func TestNew(t *testing.T) {
 	t.Parallel()
 

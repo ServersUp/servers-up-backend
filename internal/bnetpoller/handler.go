@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/ServersUp/servers-up-backend/internal/bnet"
 	"github.com/ServersUp/servers-up-backend/internal/db"
@@ -100,19 +101,67 @@ func (h *Handler) handleRequestWithClient(ctx context.Context, event events.Clou
 		"bnetRegion", bnetConfig.Region,
 	)
 
-	metrics.EmitCount(metrics.Namespace, "PollRealmSuccess", map[string]string{"gameId": "wow", "bnetRegion": bnetConfig.Region}, int64(summary.Successful))
+	dims := map[string]string{"gameId": "wow", "bnetRegion": bnetConfig.Region}
+	metrics.EmitCount(metrics.Namespace, "PollRealmSuccess", dims, int64(summary.Successful))
 	if summary.Errors > 0 {
-		metrics.EmitCount(metrics.Namespace, "PollRealmError", map[string]string{"gameId": "wow", "bnetRegion": bnetConfig.Region}, int64(summary.Errors))
+		metrics.EmitCount(metrics.Namespace, "PollRealmError", dims, int64(summary.Errors))
 	}
+	emitPollTimingMetrics(dims, summary)
 
 	return "Polling completed successfully", nil
 }
 
 type pollSummary struct {
-	Successful int32
-	Up         int32
-	Down       int32
-	Errors     int32
+	Successful     int32
+	Up             int32
+	Down           int32
+	Errors         int32
+	RealmCount     int32
+	PollDurationMs int64
+	BnetTotalMs    int64
+	BnetMaxMs      int64
+	BnetCalls      int32
+	DdbTotalMs     int64
+	DdbCalls       int32
+}
+
+func emitPollTimingMetrics(dims map[string]string, summary pollSummary) {
+	avgBnetMs := int64(0)
+	if summary.BnetCalls > 0 {
+		avgBnetMs = summary.BnetTotalMs / int64(summary.BnetCalls)
+	}
+	avgDdbMs := int64(0)
+	if summary.DdbCalls > 0 {
+		avgDdbMs = summary.DdbTotalMs / int64(summary.DdbCalls)
+	}
+
+	slog.Info("Poll timing",
+		"bnetRegion", dims["bnetRegion"],
+		"realmCount", summary.RealmCount,
+		"concurrency", pollRealmConcurrency,
+		"pollDurationMs", summary.PollDurationMs,
+		"bnetApiAvgMs", avgBnetMs,
+		"bnetApiMaxMs", summary.BnetMaxMs,
+		"bnetApiCalls", summary.BnetCalls,
+		"ddbAvgMs", avgDdbMs,
+		"ddbCalls", summary.DdbCalls,
+	)
+
+	metrics.EmitMilliseconds(metrics.Namespace, "PollDurationMs", dims, summary.PollDurationMs)
+	metrics.EmitMilliseconds(metrics.Namespace, "PollBnetApiAvgMs", dims, avgBnetMs)
+	metrics.EmitMilliseconds(metrics.Namespace, "PollBnetApiMaxMs", dims, summary.BnetMaxMs)
+}
+
+func atomicMaxInt64(addr *int64, val int64) {
+	for {
+		cur := atomic.LoadInt64(addr)
+		if val <= cur {
+			return
+		}
+		if atomic.CompareAndSwapInt64(addr, cur, val) {
+			return
+		}
+	}
 }
 
 func (h *Handler) pollRealms(ctx context.Context, client bnetClient, bnetConfig bnet.Config) (pollSummary, error) {
@@ -121,10 +170,12 @@ func (h *Handler) pollRealms(ctx context.Context, client bnetClient, bnetConfig 
 		return pollSummary{}, err
 	}
 
+	pollStart := time.Now()
 	semaphore := make(chan struct{}, pollRealmConcurrency)
 	var wg sync.WaitGroup
 
 	var summary pollSummary
+	summary.RealmCount = int32(len(bnetConfig.Realms))
 
 	for _, realm := range bnetConfig.Realms {
 		wg.Add(1)
@@ -134,7 +185,12 @@ func (h *Handler) pollRealms(ctx context.Context, client bnetClient, bnetConfig 
 			semaphore <- struct{}{}
 			defer func() { <-semaphore }()
 
+			bnetStart := time.Now()
 			realmStatus, err := client.GetConnectedRealmStatus(ctx, bnetConfig.Region, r.ConnectedRealmID, bnetConfig.Locale)
+			bnetMs := time.Since(bnetStart).Milliseconds()
+			atomic.AddInt64(&summary.BnetTotalMs, bnetMs)
+			atomicMaxInt64(&summary.BnetMaxMs, bnetMs)
+			atomic.AddInt32(&summary.BnetCalls, 1)
 			if err != nil {
 				slog.Error("failed to poll realm", "realm", r.Name, "error", err)
 				atomic.AddInt32(&summary.Errors, 1)
@@ -148,12 +204,16 @@ func (h *Handler) pollRealms(ctx context.Context, client bnetClient, bnetConfig 
 				atomic.AddInt32(&summary.Down, 1)
 			}
 
-			if err := h.database.SaveServerStatus(ctx, "wow", "battlenet", bnetConfig.Region, r.ConnectedRealmID, statusType); err != nil {
-				if errors.Is(err, db.ErrStatusUnchanged) {
+			ddbStart := time.Now()
+			saveErr := h.database.SaveServerStatus(ctx, "wow", "battlenet", bnetConfig.Region, r.ConnectedRealmID, statusType)
+			atomic.AddInt64(&summary.DdbTotalMs, time.Since(ddbStart).Milliseconds())
+			atomic.AddInt32(&summary.DdbCalls, 1)
+			if saveErr != nil {
+				if errors.Is(saveErr, db.ErrStatusUnchanged) {
 					atomic.AddInt32(&summary.Successful, 1)
 					return
 				}
-				slog.Error("failed to save status for realm", "realm", r.Name, "error", err)
+				slog.Error("failed to save status for realm", "realm", r.Name, "error", saveErr)
 				atomic.AddInt32(&summary.Errors, 1)
 				return
 			}
@@ -163,5 +223,6 @@ func (h *Handler) pollRealms(ctx context.Context, client bnetClient, bnetConfig 
 	}
 
 	wg.Wait()
+	summary.PollDurationMs = time.Since(pollStart).Milliseconds()
 	return summary, nil
 }
