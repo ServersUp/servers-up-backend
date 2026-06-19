@@ -13,6 +13,9 @@ import (
 	"github.com/aws/aws-lambda-go/events"
 )
 
+// pollRealmConcurrency limits parallel Battle.net API and DynamoDB calls per poll.
+const pollRealmConcurrency = 20
+
 type statusDB interface {
 	SaveServerStatus(ctx context.Context, gameID, provider, region string, identifier any, status string) error
 }
@@ -118,7 +121,7 @@ func (h *Handler) pollRealms(ctx context.Context, client bnetClient, bnetConfig 
 		return pollSummary{}, err
 	}
 
-	semaphore := make(chan struct{}, 10)
+	semaphore := make(chan struct{}, pollRealmConcurrency)
 	var wg sync.WaitGroup
 
 	var summary pollSummary
