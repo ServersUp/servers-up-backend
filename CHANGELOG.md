@@ -4,6 +4,11 @@ All notable user-facing changes to ServersUp Backend will be documented in this 
 
 This changelog is intended to be readable for end users and can be published directly to the project website.
 
+## v1.2.1 — 2026-06-19
+
+### Improved
+- **World of Warcraft status checks** — regional Battle.net pollers run faster, so UP/DOWN changes can reach Discord sooner after Blizzard reports them.
+
 ## v1.2 — 2026-06-04
 
 ### Added

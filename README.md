@@ -78,10 +78,10 @@ Others look temporary (rate limits, Discord or network trouble). Those stay on t
 - **Secrets** (SSM Parameter Store): API keys and tokens. Lambdas load these at runtime.
 
 **Caching**  
-Hot paths avoid hammering S3, SSM, or DynamoDB on every request: server-mapping and secrets are cached with a TTL; the bot caches guild channel names and `/status` results briefly; pollers can reuse credentials across invocations on a warm instance.
+Hot paths avoid hammering S3, SSM, or DynamoDB on every request: server-mapping and secrets are cached with a TTL; the bot caches guild channel names and `/status` results briefly; pollers reuse credentials across invocations on a warm instance. The Battle.net client reuses HTTP connections to each regional API host during a poll (keep-alive, tuned idle pool for concurrent realm fetches).
 
 **Logging and metrics**  
-All Lambdas emit **structured JSON logs** (`slog`) to CloudWatch; verbosity is controlled with `LOG_LEVEL`. Selected failures and counts are also published as **CloudWatch metrics** (embedded in log lines)—for example poll errors and failed Discord sends—so you can alarm and trend without parsing every log line.
+All Lambdas emit **structured JSON logs** (`slog`) to CloudWatch; verbosity is controlled with `LOG_LEVEL`. Selected failures and counts are published as **CloudWatch metrics** (EMF in log lines, namespace `ServersUp`)—poll errors, BNet poll latency (`PollDurationMs`, `PollBnetApiAvgMs`, `PollBnetApiMaxMs`), and failed Discord sends—so you can alarm and trend without parsing every log line. BNet pollers also log a **`Poll timing`** summary per invocation (same numbers as the latency metrics).
 
 ## Technology Stack
 
@@ -139,7 +139,7 @@ Player populations cluster on certain regions and realms, so one status change c
 
 ### 1. Game status pollers
 
-**Battle.net (WoW)** — [`bnet-polling-function`](cmd/bnet-polling-function/) / [`internal/bnetpoller`](internal/bnetpoller/): scheduled Lambdas per region (US/EU/KR/TW) call the Blizzard API for configured connected realms, with bounded concurrency, and write UP/DOWN to the shared status table.
+**Battle.net (WoW)** — [`bnet-polling-function`](cmd/bnet-polling-function/) / [`internal/bnetpoller`](internal/bnetpoller/): scheduled Lambdas per region (US/EU/KR/TW) call the Blizzard API for configured connected realms (bounded concurrency, HTTP keep-alive in [`internal/bnet`](../internal/bnet)), and write UP/DOWN to the shared status table.
 
 **FFXIV** — [`ffxiv-polling-function`](cmd/ffxiv-polling-function/) / [`internal/ffxivpoller`](internal/ffxivpoller/): a scheduled Lambda loads the world catalog from S3, reads live status from the frontier JSON feed, and falls back to the Lodestone HTML page only if that feed cannot be fetched or parsed. Worlds are stored under game `ffxiv` with provider `lodestone`.
 
