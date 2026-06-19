@@ -13,7 +13,7 @@ import (
 
 // Client handles communication with the Battle.net APIs.
 type Client struct {
-	httpClient *http.Client
+	httpClient   *http.Client
 	clientID     string
 	clientSecret string
 	token        string
@@ -21,11 +21,22 @@ type Client struct {
 	apiURL       string
 }
 
+func defaultHTTPClient() *http.Client {
+	return &http.Client{
+		Timeout: 30 * time.Second,
+		Transport: &http.Transport{
+			// Poller runs many concurrent requests to one regional API host; default
+			// MaxIdleConnsPerHost (2) prevents meaningful keep-alive reuse.
+			MaxIdleConns:        100,
+			MaxIdleConnsPerHost: 32,
+			IdleConnTimeout:     90 * time.Second,
+		},
+	}
+}
+
 func NewClient(clientID, clientSecret string) *Client {
 	return &Client{
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-		},
+		httpClient:   defaultHTTPClient(),
 		clientID:     clientID,
 		clientSecret: clientSecret,
 		authURL:      "https://oauth.battle.net/token",
@@ -84,7 +95,6 @@ func (c *Client) GetConnectedRealmStatus(ctx context.Context, region string, con
 	}
 
 	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Connection", "close")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -260,7 +270,6 @@ func (c *Client) getJSON(ctx context.Context, rawURL string, target any) error {
 		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Connection", "close")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
