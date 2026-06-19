@@ -55,6 +55,8 @@ To regenerate poller configs and `server-mapping.json` from Battle.net (localize
 
 `go run ./scripts/generate-bnet-configs` (from repo root) with `BNET_CLIENT_ID` and `BNET_CLIENT_SECRET` set. It writes `config-out/bnet-servers-config-<region>.json` plus `config-out/server-mapping.json` using [`internal/bnet`](../internal/bnet) (`BuildRealmConfigs`, `DefaultWoWRegionEndpoints`) and [`internal/servermap`](../internal/servermap).
 
+**Ops:** each poll logs **`Poll timing`** (`pollDurationMs`, `bnetApiAvgMs`, `ddbAvgMs`, …). CloudWatch namespace **`ServersUp`**: `PollDurationMs`, `PollBnetApiAvgMs`, `PollBnetApiMaxMs`, `PollRealmSuccess`, `PollRealmError` (dimensions `gameId`, `bnetRegion`). Filter logs with `msg = "Poll timing"`.
+
 ## FFXIV config (Lodestone world status)
 
 FFXIV catalog data is generated from the official Lodestone world status page (HTML scrape; no API key). Parser lives in [`internal/ffxivlodestone`](../internal/ffxivlodestone/).
