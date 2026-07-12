@@ -4,6 +4,12 @@ All notable user-facing changes to ServersUp Backend will be documented in this 
 
 This changelog is intended to be readable for end users and can be published directly to the project website.
 
+## v1.3 — 2026-07-13
+
+### Added
+- **Live status on the website** — check World of Warcraft and Final Fantasy XIV **UP/DOWN** on [serversup.github.io](https://serversup.github.io/) without adding the Discord bot. Pick a game and region to browse every listed realm.
+- Status on the site refreshes from the same live data the bot uses for alerts, so Discord subscribers and the public page stay in sync when a realm flips.
+
 ## v1.2.1 — 2026-06-19
 
 ### Improved
