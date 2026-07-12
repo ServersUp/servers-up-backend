@@ -19,7 +19,7 @@ import (
 
 const (
 	StatusUnknown      = "UNKNOWN"
-	cacheControlPublic = "public, max-age=60"
+	cacheControlPublic = "public, max-age=30"
 	contentTypeJSON    = "application/json"
 )
 
