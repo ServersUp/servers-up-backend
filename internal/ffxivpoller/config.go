@@ -8,23 +8,27 @@ import (
 
 	"github.com/ServersUp/servers-up-backend/internal/config"
 	"github.com/ServersUp/servers-up-backend/internal/db"
+	"github.com/ServersUp/servers-up-backend/internal/snapshotnotify"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	awslambda "github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
 // RuntimeConfig holds resolved dependencies for the FFXIV polling Lambda.
 type RuntimeConfig struct {
-	configLoader configLoader
-	statusDB     statusDB
-	configBucket string
-	configKey    string
+	configLoader   configLoader
+	statusDB       statusDB
+	configBucket   string
+	configKey      string
+	snapshotNotify snapshotnotify.Publisher
 }
 
 // LoadFromEnv reads required environment variables, wires AWS clients, and returns
 // a RuntimeConfig ready to build a Handler.
 //
 // Required variables: CONFIG_BUCKET, FFXIV_LODESTONE_CONFIG_PATH, DDB_TABLE_NAME.
+// Optional: STATUS_SNAPSHOT_FUNCTION_NAME (async-invoke StatusSnapshotLambda when statuses change).
 func LoadFromEnv(ctx context.Context) (*RuntimeConfig, error) {
 	configBucket := os.Getenv("CONFIG_BUCKET")
 	configKey := os.Getenv("FFXIV_LODESTONE_CONFIG_PATH")
@@ -53,20 +57,22 @@ func LoadFromEnv(ctx context.Context) (*RuntimeConfig, error) {
 	database := db.NewDatabase(dynamodb.NewFromConfig(cfg), ddbTable)
 
 	return &RuntimeConfig{
-		configLoader: provider,
-		statusDB:     database,
-		configBucket: configBucket,
-		configKey:    configKey,
+		configLoader:   provider,
+		statusDB:       database,
+		configBucket:   configBucket,
+		configKey:      configKey,
+		snapshotNotify: snapshotnotify.FromEnv(awslambda.NewFromConfig(cfg)),
 	}, nil
 }
 
 // Deps builds a Deps struct from the resolved RuntimeConfig.
 func (c *RuntimeConfig) Deps() Deps {
 	return Deps{
-		ConfigLoader: c.configLoader,
-		StatusDB:     c.statusDB,
-		ConfigBucket: c.configBucket,
-		ConfigKey:    c.configKey,
+		ConfigLoader:   c.configLoader,
+		StatusDB:       c.statusDB,
+		ConfigBucket:   c.configBucket,
+		ConfigKey:      c.configKey,
+		SnapshotNotify: c.snapshotNotify,
 	}
 }
 
