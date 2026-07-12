@@ -126,6 +126,42 @@ func (db *Database) GetServerStatus(ctx context.Context, gameID, serverID string
 	return &status, nil
 }
 
+// ListServerStatusesByGame returns every GameServerStatus row for the given gameId partition.
+// It queries the table PK and paginates until all items are read.
+func (db *Database) ListServerStatusesByGame(ctx context.Context, gameID string) ([]models.GameServerStatus, error) {
+	var out []models.GameServerStatus
+	var startKey map[string]types.AttributeValue
+
+	for {
+		qout, err := db.client.Query(ctx, &dynamodb.QueryInput{
+			TableName:              aws.String(db.tableName),
+			KeyConditionExpression: aws.String("gameId = :gid"),
+			ExpressionAttributeValues: map[string]types.AttributeValue{
+				":gid": &types.AttributeValueMemberS{Value: gameID},
+			},
+			ExclusiveStartKey: startKey,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to query server statuses by game: %w", err)
+		}
+
+		for _, item := range qout.Items {
+			var row models.GameServerStatus
+			if err := attributevalue.UnmarshalMap(item, &row); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal server status for game %s: %w", gameID, err)
+			}
+			out = append(out, row)
+		}
+
+		if qout.LastEvaluatedKey == nil {
+			break
+		}
+		startKey = qout.LastEvaluatedKey
+	}
+
+	return out, nil
+}
+
 // AddSubscription adds a new Discord channel subscription for a specific server.
 func (db *Database) AddSubscription(ctx context.Context, sub models.Subscription) error {
 	item, err := attributevalue.MarshalMap(sub)

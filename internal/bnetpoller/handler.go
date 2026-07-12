@@ -11,6 +11,7 @@ import (
 	"github.com/ServersUp/servers-up-backend/internal/bnet"
 	"github.com/ServersUp/servers-up-backend/internal/db"
 	"github.com/ServersUp/servers-up-backend/internal/metrics"
+	"github.com/ServersUp/servers-up-backend/internal/snapshotnotify"
 	"github.com/aws/aws-lambda-go/events"
 )
 
@@ -39,6 +40,7 @@ type Deps struct {
 	BnetClientSecret string
 	ConfigBucket     string
 	ConfigKey        string
+	SnapshotNotify   snapshotnotify.Publisher
 }
 
 // Handler manages dependencies and lifecycle for a Battle.net polling Lambda.
@@ -49,6 +51,7 @@ type Handler struct {
 	database       statusDB
 	bnetClientID   string
 	bnetSecret     string
+	snapshotNotify snapshotnotify.Publisher
 }
 
 // New constructs a Handler from fully-resolved dependencies. It returns an error
@@ -66,6 +69,10 @@ func New(deps Deps) (*Handler, error) {
 	if deps.ConfigBucket == "" || deps.ConfigKey == "" {
 		return nil, errors.New("bnetpoller: ConfigBucket and ConfigKey are required")
 	}
+	notify := deps.SnapshotNotify
+	if notify == nil {
+		notify = snapshotnotify.Nop{}
+	}
 	return &Handler{
 		configBucket:   deps.ConfigBucket,
 		configKey:      deps.ConfigKey,
@@ -73,6 +80,7 @@ func New(deps Deps) (*Handler, error) {
 		database:       deps.StatusDB,
 		bnetClientID:   deps.BnetClientID,
 		bnetSecret:     deps.BnetClientSecret,
+		snapshotNotify: notify,
 	}, nil
 }
 
@@ -95,6 +103,7 @@ func (h *Handler) handleRequestWithClient(ctx context.Context, event events.Clou
 
 	slog.Info("Polling Summary",
 		"successful", summary.Successful,
+		"changed", summary.Changed,
 		"up", summary.Up,
 		"down", summary.Down,
 		"errors", summary.Errors,
@@ -108,11 +117,18 @@ func (h *Handler) handleRequestWithClient(ctx context.Context, event events.Clou
 	}
 	emitPollTimingMetrics(dims, summary)
 
+	if h.snapshotNotify != nil {
+		if err := h.snapshotNotify.NotifyChanged(ctx, int(summary.Changed)); err != nil {
+			slog.Error("status snapshot notify failed", "error", err, "changed", summary.Changed)
+		}
+	}
+
 	return "Polling completed successfully", nil
 }
 
 type pollSummary struct {
 	Successful     int32
+	Changed        int32
 	Up             int32
 	Down           int32
 	Errors         int32
@@ -219,6 +235,7 @@ func (h *Handler) pollRealms(ctx context.Context, client bnetClient, bnetConfig 
 			}
 
 			atomic.AddInt32(&summary.Successful, 1)
+			atomic.AddInt32(&summary.Changed, 1)
 		}(realm)
 	}
 

@@ -77,6 +77,9 @@ Others look temporary (rate limits, Discord or network trouble). Those stay on t
 - **Per-poller config** (separate JSON in S3, e.g. Battle.net realm lists per region, FFXIV world catalog): what that poller should check. Add servers or regions by editing JSON, not Go.  
 - **Secrets** (SSM Parameter Store): API keys and tokens. Lambdas load these at runtime.
 
+**Public status snapshot**  
+On a short schedule, a **snapshot** Lambda joins the shared catalog with the status table and writes a single public JSON object to a dedicated S3 bucket. **CloudFront** serves that object (cached at the edge) so a future status page can read live UP/DOWN without calling Discord or DynamoDB from the browser. Private config stays in the existing config bucket.
+
 **Caching**  
 Hot paths avoid hammering S3, SSM, or DynamoDB on every request: server-mapping and secrets are cached with a TTL; the bot caches guild channel names and `/status` results briefly; pollers reuse credentials across invocations on a warm instance. The Battle.net client reuses HTTP connections to each regional API host during a poll (keep-alive, tuned idle pool for concurrent realm fetches).
 
@@ -118,6 +121,7 @@ Player populations cluster on certain regions and realms, so one status change c
 ├── cmd/
 │   ├── bnet-polling-function/              # Lambda: polls Blizzard API (US/EU/KR/TW); logic in internal/bnetpoller; CI deploys one build to four function names
 │   ├── ffxiv-polling-function/             # Lambda: polls FFXIV world status; logic in internal/ffxivpoller
+│   ├── status-snapshot-function/           # Lambda: mapping + status → public latest.json for CDN
 │   ├── discord-bot-api/                    # Lambda entrypoint for Discord interactions
 │   ├── discord-guild-notify-job-creator/   # Lambda: DDB stream → SQS notify jobs
 │   ├── discord-guild-notify-lambda/        # Lambda: SQS → Discord channel messages

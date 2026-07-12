@@ -181,6 +181,73 @@ func TestGetServerStatus_notFound(t *testing.T) {
 	}
 }
 
+func TestListServerStatusesByGame_returnsRows(t *testing.T) {
+	t.Parallel()
+
+	row := models.GameServerStatus{
+		GameID:        "wow",
+		ServerID:      "battlenet#us#57",
+		Provider:      "battlenet",
+		Region:        "us",
+		Status:        "UP",
+		LastUpdatedAt: 1710000000,
+	}
+	item, err := attributevalue.MarshalMap(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	f := &fakeDDB{
+		queryOuts: []*dynamodb.QueryOutput{{Items: []map[string]types.AttributeValue{item}}},
+	}
+	db := NewDatabase(f, "GameServerStatus")
+
+	got, err := db.ListServerStatusesByGame(context.Background(), "wow")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ServerID != "battlenet#us#57" || got[0].Status != "UP" {
+		t.Fatalf("unexpected rows: %#v", got)
+	}
+}
+
+func TestListServerStatusesByGame_paginates(t *testing.T) {
+	t.Parallel()
+
+	row1 := models.GameServerStatus{GameID: "wow", ServerID: "battlenet#us#1", Status: "UP"}
+	row2 := models.GameServerStatus{GameID: "wow", ServerID: "battlenet#us#2", Status: "DOWN"}
+	item1, err := attributevalue.MarshalMap(row1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item2, err := attributevalue.MarshalMap(row2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	f := &fakeDDB{
+		queryOuts: []*dynamodb.QueryOutput{
+			{
+				Items:            []map[string]types.AttributeValue{item1},
+				LastEvaluatedKey: map[string]types.AttributeValue{"gameId": &types.AttributeValueMemberS{Value: "wow"}},
+			},
+			{Items: []map[string]types.AttributeValue{item2}},
+		},
+	}
+	db := NewDatabase(f, "GameServerStatus")
+
+	got, err := db.ListServerStatusesByGame(context.Background(), "wow")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.queryCalls != 2 {
+		t.Fatalf("expected 2 query calls, got %d", f.queryCalls)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(got))
+	}
+}
+
 func TestListSubscriptionsByGuild_returnsRows(t *testing.T) {
 	t.Parallel()
 

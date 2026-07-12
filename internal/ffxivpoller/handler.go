@@ -9,6 +9,7 @@ import (
 	"github.com/ServersUp/servers-up-backend/internal/db"
 	"github.com/ServersUp/servers-up-backend/internal/ffxivlodestone"
 	"github.com/ServersUp/servers-up-backend/internal/metrics"
+	"github.com/ServersUp/servers-up-backend/internal/snapshotnotify"
 	"github.com/aws/aws-lambda-go/events"
 )
 
@@ -26,12 +27,13 @@ type statusSource interface {
 
 // Deps holds dependencies for the FFXIV polling handler.
 type Deps struct {
-	ConfigLoader configLoader
-	StatusDB     statusDB
-	ConfigBucket string
-	ConfigKey    string
-	StatusSource statusSource
-	HTTPClient   *http.Client
+	ConfigLoader   configLoader
+	StatusDB       statusDB
+	ConfigBucket   string
+	ConfigKey      string
+	StatusSource   statusSource
+	HTTPClient     *http.Client
+	SnapshotNotify snapshotnotify.Publisher
 }
 
 // Handler polls FFXIV world status and writes to DynamoDB.
@@ -41,6 +43,7 @@ type Handler struct {
 	configProvider configLoader
 	database       statusDB
 	statusSource   statusSource
+	snapshotNotify snapshotnotify.Publisher
 }
 
 // New constructs a Handler from resolved dependencies.
@@ -58,12 +61,17 @@ func New(deps Deps) (*Handler, error) {
 	if src == nil {
 		src = &defaultStatusSource{client: deps.HTTPClient}
 	}
+	notify := deps.SnapshotNotify
+	if notify == nil {
+		notify = snapshotnotify.Nop{}
+	}
 	return &Handler{
 		configBucket:   deps.ConfigBucket,
 		configKey:      deps.ConfigKey,
 		configProvider: deps.ConfigLoader,
 		database:       deps.StatusDB,
 		statusSource:   src,
+		snapshotNotify: notify,
 	}, nil
 }
 
@@ -91,6 +99,7 @@ func (h *Handler) HandleRequest(ctx context.Context, event events.CloudWatchEven
 		"source", source,
 		"catalogWorlds", len(worlds),
 		"successful", summary.Successful,
+		"changed", summary.Changed,
 		"up", summary.Up,
 		"down", summary.Down,
 		"errors", summary.Errors,
@@ -102,11 +111,18 @@ func (h *Handler) HandleRequest(ctx context.Context, event events.CloudWatchEven
 		metrics.EmitCount(metrics.Namespace, "PollRealmError", dims, int64(summary.Errors))
 	}
 
+	if h.snapshotNotify != nil {
+		if err := h.snapshotNotify.NotifyChanged(ctx, summary.Changed); err != nil {
+			slog.Error("status snapshot notify failed", "error", err, "changed", summary.Changed)
+		}
+	}
+
 	return "Polling completed successfully", nil
 }
 
 type pollSummary struct {
 	Successful int
+	Changed    int
 	Up         int
 	Down       int
 	Errors     int
@@ -138,6 +154,7 @@ func (h *Handler) applyStatuses(ctx context.Context, worlds []ffxivlodestone.Cat
 			continue
 		}
 		summary.Successful++
+		summary.Changed++
 	}
 	return summary
 }
