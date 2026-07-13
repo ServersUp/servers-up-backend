@@ -12,7 +12,7 @@ func (h *Handler) handleHelp() (events.LambdaFunctionURLResponse, error) {
 	msg := strings.Join([]string{
 		"**ServersUp Discord Bot — Help**",
 		"",
-		"Full info: https://serversup.github.io",
+		"Full info: https://serversup.armasn.dev",
 		"",
 		"**Commands**",
 		"- `/subscribe game:<game> region:<region> server:<server> [role:<role>]` — subscribe this channel to server status updates (pick **game**, then **region**, then **server**; optional **role** from Discord’s role picker)",

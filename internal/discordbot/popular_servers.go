@@ -1,7 +1,7 @@
 package discordbot
 
 // supportedGamesListURL is the public page listing all configured servers per game.
-const supportedGamesListURL = "https://serversup.github.io/#games"
+const supportedGamesListURL = "https://serversup.armasn.dev/install/#games"
 
 // maxInlineServerNames is how many server keys we list in one Discord message before abbreviating.
 const maxInlineServerNames = 25
