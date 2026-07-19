@@ -4,66 +4,24 @@ A modern, highly-available backend suite for game server status polling and Disc
 
 ## Project Summary
 
-ServersUp Backend provides a robust infrastructure for monitoring game server availability (World of Warcraft via Battle.net, Final Fantasy XIV via Lodestone/frontier status) and allowing users to subscribe to real-time status alerts via Discord. The system is designed for multi-region high availability and uses a dynamic CI/CD pipeline for seamless deployments.
+ServersUp Backend monitors game server availability (World of Warcraft via Battle.net and Final Fantasy XIV via Frontier/Lodestone) and lets users subscribe to real-time status alerts through Discord. Regional pollers cover each supported provider region, while a dynamic CI/CD pipeline deploys the Go Lambdas.
 
 ## Architecture
 
-```mermaid
-graph TD
-  subgraph discord[Discord]
-    User[User]
-    DiscordAPI[DiscordAPI]
-  end
-
-  subgraph aws[AWS]
-    BotApi[DiscordBotApiLambda]
-    BNetPoller[BNetPollingLambda]
-    FFXIVPoller[FFXIVPollingLambda]
-    Scheduler[EventBridgeSchedule]
-    JobCreator[DiscordGuildNotifyJobCreatorLambda]
-    JobsQueue[SqsJobsQueue_primary]
-    JobsDLQ[SqsJobsDLQ]
-    Notifier[DiscordGuildNotifyLambda]
-    SubsDdb[SubscriptionsDynamoDB]
-    StatusDdb[StatusDynamoDB]
-    ConfigS3[ConfigS3]
-  end
-
-  User -->|SlashCommands| DiscordAPI
-  DiscordAPI -->|SignedWebhook| BotApi
-  BotApi --> SubsDdb
-  BotApi --> StatusDdb
-  BotApi --> ConfigS3
-
-  Scheduler --> BNetPoller
-  Scheduler --> FFXIVPoller
-  BNetPoller -->|BattleNetAPI| BattleNet[BattleNetAPI]
-  BNetPoller --> StatusDdb
-  BNetPoller --> ConfigS3
-  FFXIVPoller -->|FrontierAndLodestone| FFXIVStatus[FFXIVStatusFeeds]
-  FFXIVPoller --> StatusDdb
-  FFXIVPoller --> ConfigS3
-
-  StatusDdb -->|StreamEvent| JobCreator
-  JobCreator -->|enqueue| JobsQueue
-  JobsQueue -->|consume ReportBatchItemFailures| Notifier
-  JobsQueue -.->|redrive after 5 failed receives| JobsDLQ
-  JobsDLQ -.->|operator redrive| JobsQueue
-  Notifier -->|DiscordAPI| DiscordAPI
-```
+![ServersUp architecture showing status polling, Discord commands and notifications, the public status site, data stores, CI/CD, and AWS edge services](docs/assets/serversup-architecture.png)
 
 ### How it works
 
-ServersUp has two main paths: **commands** (Discord → bot) and **notifications** (status change → Discord channels).
+ServersUp has three main product paths: **commands** (Discord → bot), **notifications** (status change → Discord channels), and the **public status snapshot/site** (status change → JSON snapshot → website).
 
 **Commands**  
-Users run slash commands in Discord. Discord calls the bot API (Lambda behind a function URL). The bot reads and writes **subscriptions** and **current status** in DynamoDB, using a shared **server catalog** in S3 so friendly names line up with the same server IDs the pollers use.
+Users run slash commands in Discord. Discord calls the bot API through a **Lambda Function URL**. The bot reads and writes **subscriptions** and **current status** in DynamoDB, using a shared **server catalog** in S3 so friendly names line up with the same server IDs the pollers use.
 
 **Status polling**  
-On a schedule (EventBridge), one or more **poller** Lambdas check whether game servers are up or down. Each poller is built for a particular way of getting status—REST API, JSON feed, HTML scrape, or similar—without tying the overall design to one game or vendor. Today that includes Battle.net realm polling (separate regional Lambdas) and FFXIV world polling (frontier JSON with a Lodestone HTML fallback when the feed is unavailable). Results are stored in a shared **status** table in DynamoDB. Only rows that actually change are interesting downstream; unchanged polls do not spam the notification path.
+On a schedule (EventBridge), one or more **poller** Lambdas check whether game servers are up or down. Each poller is built for a particular way of getting status—REST API, JSON feed, HTML scrape, or similar—without tying the overall design to one game or vendor. Today that includes four Battle.net regional Lambdas (US/EU/KR/TW) and FFXIV world polling (Frontier JSON with a Lodestone HTML fallback when Frontier cannot be fetched or parsed). Results are stored in a shared **status** table in DynamoDB. Only rows that actually change are interesting downstream; unchanged polls do not spam the notification path.
 
 **Notifications**  
-When a status row changes, **DynamoDB Streams** emits an event. A **job-creator** Lambda handles that stream: for each Discord subscription on that server, it enqueues a small job on **SQS**. **Notifier** Lambdas consume those jobs in batches and post to the right channel (and optional role mention).
+When a status row changes, **DynamoDB Streams** emits an event. A **job-creator** Lambda handles that stream, reads matching subscriptions from `DiscordBotSubscriptions`, and enqueues one small job per subscription on **SQS**. Each job carries the subscription's `ServerLabel`; **notifier** Lambdas consume those jobs in batches and post to the right channel (and optional role mention) without looking up subscriptions again.
 
 The queue is there because load is **not evenly spread across servers**—popular regions concentrate many subscribers on the same status flip. The stream burst is turned into many queue messages; SQS drives **multiple notifier Lambdas in parallel** and smooths work through batching, instead of one hot server update fanning out in a single invocation.
 
@@ -78,7 +36,7 @@ Others look temporary (rate limits, Discord or network trouble). Those stay on t
 - **Secrets** (SSM Parameter Store): API keys and tokens. Lambdas load these at runtime.
 
 **Public status snapshot**  
-On a short schedule, a **snapshot** Lambda joins the shared catalog with the status table and writes a single public JSON object to a dedicated S3 bucket. **CloudFront** serves that object (cached at the edge) so a future status page can read live UP/DOWN without calling Discord or DynamoDB from the browser. Private config stays in the existing config bucket.
+When a poller reports `Changed > 0`, it asynchronously invokes **StatusSnapshotLambda**. The snapshot Lambda joins the shared catalog with the status table and writes `status/latest.json` to S3. CloudFront serves the JSON at [serversup.armasn.dev/status/latest.json](https://serversup.armasn.dev/status/latest.json), and the live [ServersUp status page](https://serversup.armasn.dev/) reads it without calling Discord or DynamoDB from the browser.
 
 **Caching**  
 Hot paths avoid hammering S3, SSM, or DynamoDB on every request: server-mapping and secrets are cached with a TTL; the bot caches guild channel names and `/status` results briefly; pollers reuse credentials across invocations on a warm instance. The Battle.net client reuses HTTP connections to each regional API host during a poll (keep-alive, tuned idle pool for concurrent realm fetches).
@@ -143,7 +101,7 @@ Player populations cluster on certain regions and realms, so one status change c
 
 ### 1. Game status pollers
 
-**Battle.net (WoW)** — [`bnet-polling-function`](cmd/bnet-polling-function/) / [`internal/bnetpoller`](internal/bnetpoller/): scheduled Lambdas per region (US/EU/KR/TW) call the Blizzard API for configured connected realms (bounded concurrency, HTTP keep-alive in [`internal/bnet`](../internal/bnet)), and write UP/DOWN to the shared status table.
+**Battle.net (WoW)** — [`bnet-polling-function`](cmd/bnet-polling-function/) / [`internal/bnetpoller`](internal/bnetpoller/): four scheduled regional Lambdas (US/EU/KR/TW) call the Blizzard API for configured connected realms (bounded concurrency, HTTP keep-alive in [`internal/bnet`](internal/bnet)), and write UP/DOWN to the shared status table.
 
 **FFXIV** — [`ffxiv-polling-function`](cmd/ffxiv-polling-function/) / [`internal/ffxivpoller`](internal/ffxivpoller/): a scheduled Lambda loads the world catalog from S3, reads live status from the frontier JSON feed, and falls back to the Lodestone HTML page only if that feed cannot be fetched or parsed. Worlds are stored under game `ffxiv` with provider `lodestone`.
 
@@ -159,7 +117,7 @@ A Lambda Function URL-backed API that processes Discord interactions. Command lo
 *   **Security**: Mandatory Ed25519 signature verification plus a maximum age on `X-Signature-Timestamp` to reject replayed requests.
 
 ### 3. Discord guild notify pipeline
-When status changes in DynamoDB, a stream-triggered job creator enqueues per-subscription work to SQS; a notifier Lambda posts to subscribed Discord channels (optional role mention). See **How it works** above for the end-to-end story and how the main queue and dead-letter queue behave.
+When status changes in DynamoDB, a stream-triggered job creator reads matching rows from `DiscordBotSubscriptions` and enqueues per-subscription work to SQS, including the stored `ServerLabel`; a notifier Lambda posts to subscribed Discord channels (optional role mention) without repeating the subscription lookup. See **How it works** above for the end-to-end story and how the main queue and dead-letter queue behave.
 
 - **Queues**: primary `discord-guild-notify-jobs`; dead-letter `discord-guild-notify-jobs-dlq`.
 - **Reliability**: transient send failures retry on the primary queue; clearly permanent failures are dropped; repeatedly failing jobs land in the dead-letter queue for operator review and redrive.
@@ -167,10 +125,10 @@ When status changes in DynamoDB, a stream-triggered job creator enqueues per-sub
 
 ## ⚙️ CI/CD Pipeline
 
-The project features a **Fully Dynamic Deployment Matrix**.
+Terraform provisions the AWS resources and placeholder Lambda packages. This repository's GitHub Actions workflow owns the Go runtime deployments:
 *   **Auto-Discovery**: The workflow automatically detects any directory in `cmd/` containing a `deployment-config.yaml` with `type: lambda`.
-*   **Zero-Touch Scaling**: New services are automatically built and deployed to their specified regions without manual workflow edits.
-*   **Security**: Uses GitHub OIDC to assume AWS roles, eliminating the need for long-lived credentials.
+*   **Build & Deploy**: It tests and builds the discovered Go Lambdas, then updates the Terraform-provisioned functions in their configured regions.
+*   **Security**: It uses GitHub OIDC to assume AWS roles, eliminating the need for long-lived credentials.
 
 ## ⚙️ Configuration & Extensibility
 
@@ -181,10 +139,10 @@ Core business logic, such as server-to-provider mappings and polling targets, is
 *   **Decoupled Logic**: Add new games, regions, or servers by simply updating a JSON file.
 *   **Runtime Updates**: Services pull the latest configuration at execution time, allowing for instant system-wide changes.
 
-### 🔐 SSM & Environment Secrets
-Sensitive data and environment-specific toggles are managed through AWS SSM Parameter Store and standard Environment Variables.
+### 🔐 SSM Secrets & Runtime Configuration
+Secrets are stored in AWS SSM Parameter Store, while non-sensitive runtime settings use standard environment variables.
 *   **Secure Secrets**: API keys and client secrets are stored encrypted in SSM.
-*   **Infrastructure Agnostic**: The `internal/config` provider abstracts the retrieval logic, making it easy to swap configuration sources if needed.
+*   **Configuration Access**: The `internal/config` provider centralizes S3 and SSM retrieval for the Lambdas.
 
 ---
 *Created and maintained by the ServersUp Team.*
