@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -28,6 +29,7 @@ import (
 
 type DiscordClient interface {
 	SendChannelMessage(ctx context.Context, channelID, content, roleID string) error
+	SendWebhookMessage(ctx context.Context, webhookURL, content string) error
 }
 
 type Handler struct {
@@ -164,8 +166,21 @@ func (h *Handler) processRecord(ctx context.Context, rec events.SQSMessage) erro
 		"messageId", rec.MessageId,
 	)
 
-	if err := h.discord.SendChannelMessage(ctx, job.ChannelID, content, job.RoleID); err != nil {
-		return h.handleDiscordSendError(job, rec.MessageId, err)
+	var sendErr error
+	if job.TargetType == "webhook" {
+		if job.WebhookURL == "" {
+			slog.Warn("webhook job missing webhook url; ack-deleting",
+				"messageId", rec.MessageId,
+				"serverID", job.ServerID,
+			)
+			return nil
+		}
+		sendErr = h.discord.SendWebhookMessage(ctx, job.WebhookURL, content)
+	} else {
+		sendErr = h.discord.SendChannelMessage(ctx, job.ChannelID, content, job.RoleID)
+	}
+	if sendErr != nil {
+		return h.handleDiscordSendError(job, rec.MessageId, sendErr)
 	}
 
 	slog.Info("sent discord notification",
@@ -188,6 +203,17 @@ func (h *Handler) handleDiscordSendError(job models.GuildNotifyJob, messageID st
 				"discordStatus", apiErr.StatusCode,
 				"serverID", job.ServerID,
 				"status", job.Status,
+				"guildID", job.GuildID,
+				"channelID", job.ChannelID,
+				"messageId", messageID,
+			)
+			return nil
+		}
+		if apiErr.StatusCode == http.StatusNotFound || apiErr.StatusCode == http.StatusGone {
+			slog.Warn("webhook endpoint no longer exists; ack-deleting",
+				"error", err,
+				"discordStatus", apiErr.StatusCode,
+				"serverID", job.ServerID,
 				"guildID", job.GuildID,
 				"channelID", job.ChannelID,
 				"messageId", messageID,
@@ -271,6 +297,45 @@ type discordMessageRequest struct {
 type discordAllowedMentions struct {
 	Parse []string `json:"parse,omitempty"`
 	Roles []string `json:"roles,omitempty"`
+}
+
+func (c *discordHTTPClient) SendWebhookMessage(ctx context.Context, webhookURL, content string) error {
+	u, err := url.Parse(webhookURL)
+	if err != nil {
+		return fmt.Errorf("parse webhook url: %w", err)
+	}
+	q := u.Query()
+	q.Set("wait", "1")
+	u.RawQuery = q.Encode()
+
+	reqBody := discordMessageRequest{
+		Content: content,
+		AllowedMentions: discordAllowedMentions{
+			Parse: []string{},
+		},
+	}
+	b, err := json.Marshal(reqBody)
+	if err != nil {
+		return fmt.Errorf("marshal webhook message request: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), bytes.NewReader(b))
+	if err != nil {
+		return fmt.Errorf("create webhook request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	res, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("discord webhook request failed: %w", err)
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode >= 200 && res.StatusCode < 300 {
+		return nil
+	}
+
+	body, _ := io.ReadAll(io.LimitReader(res.Body, 8*1024))
+	return &discord.APIError{StatusCode: res.StatusCode, Body: string(body)}
 }
 
 func (c *discordHTTPClient) SendChannelMessage(ctx context.Context, channelID, content, roleID string) error {
