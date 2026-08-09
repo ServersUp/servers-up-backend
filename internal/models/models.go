@@ -37,6 +37,12 @@ type Subscription struct {
 	RoleName string `json:"role_name,omitempty" dynamodbav:"roleName,omitempty"`
 	// ServerLabel is the human-readable "game-server" label captured at subscribe time (e.g. "wow-illidan").
 	ServerLabel string `json:"server_label,omitempty" dynamodbav:"serverLabel,omitempty"`
+	// TargetType indicates the delivery mechanism: "bot" (default) or "webhook".
+	TargetType string `json:"target_type" dynamodbav:"targetType"`
+	// WebhookURL is used when TargetType is "webhook".
+	WebhookURL string `json:"webhook_url,omitempty" dynamodbav:"webhookUrl,omitempty"`
+	// WebhookToken is optional metadata for webhook delivery.
+	WebhookToken string `json:"webhook_token,omitempty" dynamodbav:"webhookToken,omitempty"`
 }
 
 // GuildNotifyJob is the payload sent to the Discord guild notify SQS queue when
@@ -50,4 +56,8 @@ type GuildNotifyJob struct {
 	// ServerLabel is the human-readable "game-server" label captured at subscribe time.
 	// When non-empty, the notify lambda uses this directly instead of reverse-mapping the technical ID.
 	ServerLabel string `json:"serverLabel,omitempty"`
+	// TargetType indicates the delivery mechanism: "bot" (default) or "webhook".
+	TargetType string `json:"targetType,omitempty"`
+	// WebhookURL is used when TargetType is "webhook".
+	WebhookURL string `json:"webhookUrl,omitempty"`
 }

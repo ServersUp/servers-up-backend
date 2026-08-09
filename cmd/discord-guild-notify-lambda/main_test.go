@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -21,10 +22,19 @@ type mockDiscord struct {
 	calls    []discordCall
 }
 
+func (m *mockDiscord) SendWebhookMessage(ctx context.Context, webhookURL, content, roleID string) error {
+	m.calls = append(m.calls, discordCall{webhookURL: webhookURL, content: content, roleID: roleID})
+	if m.sendFunc != nil {
+		return m.sendFunc(ctx, "", content, roleID)
+	}
+	return nil
+}
+
 type discordCall struct {
-	channelID string
-	content   string
-	roleID    string
+	channelID  string
+	content    string
+	roleID     string
+	webhookURL string
 }
 
 func (m *mockDiscord) SendChannelMessage(ctx context.Context, channelID, content, roleID string) error {
@@ -445,6 +455,61 @@ func TestDiscordHTTPClient_returnsAPIError(t *testing.T) {
 	if apiErr.StatusCode != 403 || !apiErr.Permanent() {
 		t.Fatalf("unexpected: %+v permanent=%v", apiErr, apiErr.Permanent())
 	}
+}
+
+func TestDiscordHTTPClient_webhookURL_rejectsNonDiscordURL(t *testing.T) {
+	t.Parallel()
+
+	client := &discordHTTPClient{httpClient: http.DefaultClient}
+	err := client.SendWebhookMessage(context.Background(), "https://evil.example.com/hook", "hello", "")
+	if err == nil {
+		t.Fatal("expected error for non-Discord webhook URL")
+	}
+}
+
+func TestDiscordHTTPClient_webhookURL_rejectsHttpScheme(t *testing.T) {
+	t.Parallel()
+
+	client := &discordHTTPClient{httpClient: http.DefaultClient}
+	err := client.SendWebhookMessage(context.Background(), "http://discord.com/api/webhooks/1/abc", "hello", "")
+	if err == nil {
+		t.Fatal("expected error for http scheme")
+	}
+}
+
+func TestDiscordHTTPClient_webhookURL_acceptsDiscordURL(t *testing.T) {
+	t.Parallel()
+
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(srv.Close)
+
+	client := &discordHTTPClient{
+		httpClient: &http.Client{Transport: &rewriteTransport{target: srv.URL}},
+	}
+	err := client.SendWebhookMessage(context.Background(), "https://discord.com/api/webhooks/123/ABC_def-1", "hello", "")
+	if err != nil {
+		t.Fatalf("expected success, got %v", err)
+	}
+	if !strings.Contains(gotPath, "/api/webhooks/123/ABC_def-1") {
+		t.Fatalf("unexpected path: %q", gotPath)
+	}
+}
+
+type rewriteTransport struct {
+	target string
+}
+
+func (rt *rewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	u, err := url.Parse(rt.target + req.URL.Path + "?" + req.URL.RawQuery)
+	if err != nil {
+		return nil, err
+	}
+	req.URL = u
+	return http.DefaultTransport.RoundTrip(req)
 }
 
 func TestDiscordHTTPClient_503Retryable(t *testing.T) {
