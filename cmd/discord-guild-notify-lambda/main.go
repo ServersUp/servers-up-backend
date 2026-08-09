@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -26,6 +27,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 )
+
+var webhookURLPattern = regexp.MustCompile(`^https://discord\.com/api/webhooks/[0-9]+/[A-Za-z0-9_-]+$`)
 
 type DiscordClient interface {
 	SendChannelMessage(ctx context.Context, channelID, content, roleID string) error
@@ -312,6 +315,9 @@ type discordAllowedMentions struct {
 }
 
 func (c *discordHTTPClient) SendWebhookMessage(ctx context.Context, webhookURL, content, roleID string) error {
+	if !webhookURLPattern.MatchString(webhookURL) {
+		return fmt.Errorf("reject webhook url: not a discord webhook url")
+	}
 	u, err := url.Parse(webhookURL)
 	if err != nil {
 		return fmt.Errorf("parse webhook url: %w", err)
