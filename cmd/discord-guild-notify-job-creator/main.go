@@ -13,8 +13,8 @@ import (
 	"github.com/ServersUp/servers-up-backend/internal/models"
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
-	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"golang.org/x/sync/errgroup"
@@ -136,6 +136,8 @@ func (h *Handler) processRecord(ctx context.Context, rec *events.DynamoDBEventRe
 				ChannelID:   sub.ChannelID,
 				RoleID:      roleIDFromMention(sub.Mention),
 				ServerLabel: sub.ServerLabel,
+				TargetType:  sub.TargetType,
+				WebhookURL:  sub.WebhookURL,
 			}
 
 			body, err := json.Marshal(job)

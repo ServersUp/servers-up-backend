@@ -21,10 +21,19 @@ type mockDiscord struct {
 	calls    []discordCall
 }
 
+func (m *mockDiscord) SendWebhookMessage(ctx context.Context, webhookURL, content, roleID string) error {
+	m.calls = append(m.calls, discordCall{webhookURL: webhookURL, content: content, roleID: roleID})
+	if m.sendFunc != nil {
+		return m.sendFunc(ctx, "", content, roleID)
+	}
+	return nil
+}
+
 type discordCall struct {
-	channelID string
-	content   string
-	roleID    string
+	channelID  string
+	content    string
+	roleID     string
+	webhookURL string
 }
 
 func (m *mockDiscord) SendChannelMessage(ctx context.Context, channelID, content, roleID string) error {

@@ -43,17 +43,13 @@ type subscribeRequest struct {
 }
 
 type SubscriptionStore interface {
-	ListSubscriptions(ctx context.Context, serverID string) ([]models.Subscription, error)
+	ListSubscriptionsByServer(ctx context.Context, serverID string) ([]models.Subscription, error)
 	AddSubscription(ctx context.Context, subscription models.Subscription) error
-}
-
-type MappingLoader interface {
-	Get(ctx context.Context, refresh func(ctx context.Context) (servermap.Mapping, error)) (servermap.Mapping, error)
 }
 
 type apiHandler struct {
 	db               SubscriptionStore
-	mappingLoader    MappingLoader
+	mappingCache     *servermap.CachedMapping
 	configProvider   *config.Provider
 	configBucket     string
 	serverMappingKey string
@@ -89,7 +85,7 @@ func NewHandler() *apiHandler {
 
 	h := &apiHandler{
 		db:               db.NewDatabase(dynamodb.NewFromConfig(cfg), tableName),
-		mappingLoader:    mappingCache,
+		mappingCache:     mappingCache,
 		configProvider:   provider,
 		configBucket:     bucket,
 		serverMappingKey: key,
@@ -101,8 +97,8 @@ func NewHandler() *apiHandler {
 
 func (h *apiHandler) HandleRequest(ctx context.Context, event events.LambdaFunctionURLRequest) (events.LambdaFunctionURLResponse, error) {
 	headers := map[string]string{
-		"Content-Type":                "application/json",
-		"Access-Control-Allow-Origin": allowedOrigin,
+		"Content-Type":                 "application/json",
+		"Access-Control-Allow-Origin":  allowedOrigin,
 		"Access-Control-Allow-Methods": "POST, OPTIONS",
 		"Access-Control-Allow-Headers": "Content-Type",
 	}
@@ -162,7 +158,7 @@ func (h *apiHandler) HandleRequest(ctx context.Context, event events.LambdaFunct
 		return errResponse(400, "webhook ownership proof failed", headers), nil
 	}
 
-	existing, err := h.db.ListSubscriptions(ctx, techID)
+	existing, err := h.db.ListSubscriptionsByServer(ctx, techID)
 	if err != nil {
 		slog.Error("failed to list subscriptions", "error", err)
 		return errResponse(500, "failed to check existing subscriptions", headers), nil
@@ -214,16 +210,17 @@ func (h *apiHandler) resolveServerViaMapping(ctx context.Context, game, region, 
 	if err != nil {
 		return "", "", err
 	}
-	techID, ok := mapping.Lookup(game, region, server)
-	if !ok {
+	gameID, regionKey, serverKey, g, s, lookupErr := mapping.Lookup(game, region, server)
+	if lookupErr != nil {
 		return "", "", fmt.Errorf("unknown server %s/%s/%s", game, region, server)
 	}
-	label := servermap.DisplayLabel(game, region, server)
+	techID := serverid.Generate(g.Provider, regionKey, s.Identifier)
+	label := servermap.DisplayLabel(gameID, regionKey, serverKey)
 	return techID, label, nil
 }
 
 func (h *apiHandler) loadMapping(ctx context.Context) (servermap.Mapping, error) {
-	return h.mappingLoader.Get(ctx, func(ctx context.Context) (servermap.Mapping, error) {
+	return h.mappingCache.Get(ctx, func(ctx context.Context) (servermap.Mapping, error) {
 		if h.configProvider == nil {
 			return servermap.Mapping{}, fmt.Errorf("missing config provider")
 		}

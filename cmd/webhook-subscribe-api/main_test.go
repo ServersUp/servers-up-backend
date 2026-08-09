@@ -11,12 +11,12 @@ import (
 )
 
 type fakeStore struct {
-	subs            []models.Subscription
-	listCalled      int
-	addCalled       int
+	subs       []models.Subscription
+	listCalled int
+	addCalled  int
 }
 
-func (f *fakeStore) ListSubscriptions(_ context.Context, serverID string) ([]models.Subscription, error) {
+func (f *fakeStore) ListSubscriptionsByServer(_ context.Context, serverID string) ([]models.Subscription, error) {
 	f.listCalled++
 	out := []models.Subscription{}
 	for _, s := range f.subs {
@@ -41,7 +41,7 @@ func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 
 func testHandler(store *fakeStore) *apiHandler {
 	h := &apiHandler{
-		db:         store,
+		db: store,
 		httpClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) *http.Response {
 			return &http.Response{
 				StatusCode: 200,
@@ -65,8 +65,8 @@ func invoke(h *apiHandler, body string, origin string) events.LambdaFunctionURLR
 		headers["origin"] = origin
 	}
 	req := events.LambdaFunctionURLRequest{
-		Body:       body,
-		Headers:    headers,
+		Body:            body,
+		Headers:         headers,
 		IsBase64Encoded: false,
 		RequestContext: events.LambdaFunctionURLRequestContext{
 			HTTP: events.LambdaFunctionURLRequestContextHTTPDescription{Method: "POST"},

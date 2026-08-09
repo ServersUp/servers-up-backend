@@ -29,7 +29,7 @@ import (
 
 type DiscordClient interface {
 	SendChannelMessage(ctx context.Context, channelID, content, roleID string) error
-	SendWebhookMessage(ctx context.Context, webhookURL, content string) error
+	SendWebhookMessage(ctx context.Context, webhookURL, content, roleID string) error
 }
 
 type Handler struct {
@@ -140,8 +140,27 @@ func (h *Handler) processRecord(ctx context.Context, rec events.SQSMessage) erro
 		return nil
 	}
 
-	if job.ServerID == "" || job.Status == "" || job.ChannelID == "" {
+	if job.ServerID == "" || job.Status == "" {
 		slog.Warn("guild notify job missing required fields; ack-deleting",
+			"messageId", rec.MessageId,
+			"serverID", job.ServerID,
+			"status", job.Status,
+			"channelID", job.ChannelID,
+			"guildID", job.GuildID,
+		)
+		return nil
+	}
+	if job.TargetType == "webhook" {
+		if job.WebhookURL == "" {
+			slog.Warn("webhook notify job missing webhook url; ack-deleting",
+				"messageId", rec.MessageId,
+				"serverID", job.ServerID,
+				"status", job.Status,
+			)
+			return nil
+		}
+	} else if job.ChannelID == "" {
+		slog.Warn("guild notify job missing channel; ack-deleting",
 			"messageId", rec.MessageId,
 			"serverID", job.ServerID,
 			"status", job.Status,
@@ -168,14 +187,7 @@ func (h *Handler) processRecord(ctx context.Context, rec events.SQSMessage) erro
 
 	var sendErr error
 	if job.TargetType == "webhook" {
-		if job.WebhookURL == "" {
-			slog.Warn("webhook job missing webhook url; ack-deleting",
-				"messageId", rec.MessageId,
-				"serverID", job.ServerID,
-			)
-			return nil
-		}
-		sendErr = h.discord.SendWebhookMessage(ctx, job.WebhookURL, content)
+		sendErr = h.discord.SendWebhookMessage(ctx, job.WebhookURL, content, job.RoleID)
 	} else {
 		sendErr = h.discord.SendChannelMessage(ctx, job.ChannelID, content, job.RoleID)
 	}
@@ -299,7 +311,7 @@ type discordAllowedMentions struct {
 	Roles []string `json:"roles,omitempty"`
 }
 
-func (c *discordHTTPClient) SendWebhookMessage(ctx context.Context, webhookURL, content string) error {
+func (c *discordHTTPClient) SendWebhookMessage(ctx context.Context, webhookURL, content, roleID string) error {
 	u, err := url.Parse(webhookURL)
 	if err != nil {
 		return fmt.Errorf("parse webhook url: %w", err)
@@ -313,6 +325,9 @@ func (c *discordHTTPClient) SendWebhookMessage(ctx context.Context, webhookURL, 
 		AllowedMentions: discordAllowedMentions{
 			Parse: []string{},
 		},
+	}
+	if roleID != "" {
+		reqBody.AllowedMentions.Roles = []string{roleID}
 	}
 	b, err := json.Marshal(reqBody)
 	if err != nil {

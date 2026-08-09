@@ -1,4 +1,0 @@
-type: lambda
-function_name: ServersUpWebhookSubscribeApiLambda
-region: us-east-1
-alias: production
