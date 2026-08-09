@@ -4,6 +4,12 @@ All notable user-facing changes to ServersUp Backend will be documented in this 
 
 This changelog is intended to be readable for end users and can be published directly to the project website.
 
+## v1.4 — 2026-08-09
+
+### Added
+- **Webhook subscriptions** — subscribe to server UP/DOWN alerts without adding the bot to your server. Paste a Discord webhook URL on the [install page](https://serversup.armasn.dev/install/), pick a game, region, and server, and ServersUp posts a test alert to confirm before saving. Alerts then flow to that channel on every status change.
+- Optional **role mention** when subscribing via webhook, so the right people get pinged.
+
 ## v1.3.1 — 2026-07-13
 
 ### Changed
