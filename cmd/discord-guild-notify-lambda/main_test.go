@@ -572,14 +572,6 @@ func TestDiscordHTTPClient_503Retryable(t *testing.T) {
 	}
 }
 
-func TestEmitNotifySendError_skipsNonHTTP(t *testing.T) {
-	t.Parallel()
-	// smoke: must not panic
-	emitNotifySendError(0)
-	emitNotifySendError(399)
-	emitNotifySendError(600)
-}
-
 func TestHandleDiscordSendError_classification(t *testing.T) {
 	t.Parallel()
 	h := &Handler{}

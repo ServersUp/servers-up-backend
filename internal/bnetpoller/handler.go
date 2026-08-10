@@ -110,12 +110,12 @@ func (h *Handler) handleRequestWithClient(ctx context.Context, event events.Clou
 		"bnetRegion", bnetConfig.Region,
 	)
 
-	dims := map[string]string{"gameId": "wow", "bnetRegion": bnetConfig.Region}
+	dims := map[string]string{"gameId": "wow"}
 	metrics.EmitCount(metrics.Namespace, "PollRealmSuccess", dims, int64(summary.Successful))
 	if summary.Errors > 0 {
 		metrics.EmitCount(metrics.Namespace, "PollRealmError", dims, int64(summary.Errors))
 	}
-	emitPollTimingMetrics(dims, summary)
+	emitPollTimingMetrics(bnetConfig.Region, dims, summary)
 
 	if h.snapshotNotify != nil {
 		if err := h.snapshotNotify.NotifyChanged(ctx, int(summary.Changed)); err != nil {
@@ -141,7 +141,7 @@ type pollSummary struct {
 	DdbCalls       int32
 }
 
-func emitPollTimingMetrics(dims map[string]string, summary pollSummary) {
+func emitPollTimingMetrics(bnetRegion string, dims map[string]string, summary pollSummary) {
 	avgBnetMs := int64(0)
 	if summary.BnetCalls > 0 {
 		avgBnetMs = summary.BnetTotalMs / int64(summary.BnetCalls)
@@ -152,7 +152,7 @@ func emitPollTimingMetrics(dims map[string]string, summary pollSummary) {
 	}
 
 	slog.Info("Poll timing",
-		"bnetRegion", dims["bnetRegion"],
+		"bnetRegion", bnetRegion,
 		"realmCount", summary.RealmCount,
 		"concurrency", pollRealmConcurrency,
 		"pollDurationMs", summary.PollDurationMs,
@@ -165,7 +165,6 @@ func emitPollTimingMetrics(dims map[string]string, summary pollSummary) {
 
 	metrics.EmitMilliseconds(metrics.Namespace, "PollDurationMs", dims, summary.PollDurationMs)
 	metrics.EmitMilliseconds(metrics.Namespace, "PollBnetApiAvgMs", dims, avgBnetMs)
-	metrics.EmitMilliseconds(metrics.Namespace, "PollBnetApiMaxMs", dims, summary.BnetMaxMs)
 }
 
 func atomicMaxInt64(addr *int64, val int64) {

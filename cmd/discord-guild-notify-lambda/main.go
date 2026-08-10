@@ -11,14 +11,12 @@ import (
 	"net/url"
 	"os"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/ServersUp/servers-up-backend/internal/config"
 	"github.com/ServersUp/servers-up-backend/internal/discord"
 	"github.com/ServersUp/servers-up-backend/internal/logsetup"
-	"github.com/ServersUp/servers-up-backend/internal/metrics"
 	"github.com/ServersUp/servers-up-backend/internal/models"
 	"github.com/ServersUp/servers-up-backend/internal/servermap"
 	"github.com/aws/aws-lambda-go/events"
@@ -103,15 +101,6 @@ func sqsQueueNameFromURL(queueURL string) string {
 		return queueURL[i+1:]
 	}
 	return ""
-}
-
-func emitNotifySendError(statusCode int) {
-	if statusCode < 400 || statusCode >= 600 {
-		return
-	}
-	metrics.EmitCount(metrics.Namespace, "NotifySendError", map[string]string{
-		"discordStatus": strconv.Itoa(statusCode),
-	}, 1)
 }
 
 func (h *Handler) HandleRequest(ctx context.Context, event events.SQSEvent) (events.SQSEventResponse, error) {
@@ -216,7 +205,6 @@ func (h *Handler) processRecord(ctx context.Context, rec events.SQSMessage) erro
 
 func (h *Handler) handleDiscordSendError(job models.GuildNotifyJob, messageID string, err error) error {
 	if apiErr, ok := discord.AsAPIError(err); ok {
-		emitNotifySendError(apiErr.StatusCode)
 		if apiErr.Permanent() {
 			slog.Warn("permanent discord send failure; ack-deleting",
 				"error", err,
