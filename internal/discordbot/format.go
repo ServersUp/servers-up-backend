@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/ServersUp/servers-up-backend/internal/models"
+	"github.com/ServersUp/servers-up-backend/internal/scope"
 	"github.com/ServersUp/servers-up-backend/internal/servermap"
 )
 
@@ -31,9 +32,13 @@ func (h *Handler) subscriptionDisplayLabel(mapping servermap.Mapping, sub models
 
 // subscriptionUnsubscribeChoiceText is shown in autocomplete only (no subscription IDs; role as @Name when known).
 func (h *Handler) subscriptionUnsubscribeChoiceText(ctx context.Context, guildID string, mapping servermap.Mapping, sub models.Subscription) string {
-	game, region, server := splitGameServerHuman(subscriptionServerLabel(mapping, sub))
+	human := subscriptionServerLabel(mapping, sub)
 	role := h.subscriptionRoleDisplay(sub)
 	ch := h.channelPretty(ctx, guildID, sub.ChannelID)
+	if scope.IsWildcard(sub.ServerID) {
+		return fmt.Sprintf("%s · %s · in %s", human, role, ch)
+	}
+	game, region, server := splitGameServerHuman(human)
 	if region != "" && server != "" {
 		return fmt.Sprintf("%s · %s · %s · %s · in %s", game, region, server, role, ch)
 	}

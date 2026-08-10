@@ -37,6 +37,14 @@ type Subscription struct {
 	RoleName string `json:"role_name,omitempty" dynamodbav:"roleName,omitempty"`
 	// ServerLabel is the human-readable "game-server" label captured at subscribe time (e.g. "wow-illidan").
 	ServerLabel string `json:"server_label,omitempty" dynamodbav:"serverLabel,omitempty"`
+	// Scope indicates the target scope: "server" (default), "region", or "game".
+	// "region" and "game" are wildcard scopes whose partition key is a reserved
+	// "region#<gameId>#<region>" / "game#<gameId>" key (see internal/scope).
+	Scope string `json:"scope,omitempty" dynamodbav:"scope,omitempty"`
+	// GameID is the game for region/game scopes.
+	GameID string `json:"game_id,omitempty" dynamodbav:"gameId,omitempty"`
+	// Region is the region for region scopes.
+	Region string `json:"region,omitempty" dynamodbav:"region,omitempty"`
 	// TargetType indicates the delivery mechanism: "bot" (default) or "webhook".
 	TargetType string `json:"target_type" dynamodbav:"targetType"`
 	// WebhookURL is used when TargetType is "webhook".
@@ -60,4 +68,34 @@ type GuildNotifyJob struct {
 	TargetType string `json:"targetType,omitempty"`
 	// WebhookURL is used when TargetType is "webhook".
 	WebhookURL string `json:"webhookUrl,omitempty"`
+	// Aggregate marks an aggregate scope notification (region/game wildcard)
+	// rather than a per-server notification.
+	Aggregate bool `json:"aggregate,omitempty"`
+	// ScopeLabel is the human scope for aggregate messages, e.g. "WoW" or
+	// "WoW EU". Only set when Aggregate is true.
+	ScopeLabel string `json:"scopeLabel,omitempty"`
+	// Scope is the scope type for aggregate jobs: "region" or "game".
+	Scope string `json:"scope,omitempty"`
+}
+
+// ScopeState tracks the aggregate state of a region/game subscription scope.
+// One row exists per currently subscribed wildcard scope.
+type ScopeState struct {
+	// ScopeKey is the wildcard partition key ("region#<gameId>#<region>" /
+	// "game#<gameId>").
+	ScopeKey string `json:"scopeKey" dynamodbav:"scopeKey"`
+	// UpCount is the number of catalog members currently UP.
+	UpCount int `json:"upCount" dynamodbav:"upCount"`
+	// DownCount is the number of catalog members currently not-UP.
+	DownCount int `json:"downCount" dynamodbav:"downCount"`
+	// TotalCount is the number of catalog members for the scope.
+	TotalCount int `json:"totalCount" dynamodbav:"totalCount"`
+	// State is the aggregate state: ALL_UP, MIXED, or ALL_DOWN.
+	State string `json:"state" dynamodbav:"state"`
+	// StateSince is the unix time the current State began.
+	StateSince int64 `json:"stateSince" dynamodbav:"stateSince"`
+	// LastNotifiedEpisode is the episode token last notified for this scope.
+	LastNotifiedEpisode string `json:"lastNotifiedEpisode,omitempty" dynamodbav:"lastNotifiedEpisode,omitempty"`
+	// UpdatedAt is the unix time of the last write.
+	UpdatedAt int64 `json:"updatedAt" dynamodbav:"updatedAt"`
 }

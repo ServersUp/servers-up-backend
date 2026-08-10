@@ -411,6 +411,46 @@ func TestFormatDiscordContent(t *testing.T) {
 	}
 }
 
+func TestFormatAggregateContent(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		job  models.GuildNotifyJob
+		want string
+	}{
+		{
+			name: "game scope",
+			job:  models.GuildNotifyJob{Aggregate: true, ScopeLabel: "WoW", Status: "DOWN"},
+			want: "All **WoW** servers are now **DOWN**.",
+		},
+		{
+			name: "region scope",
+			job:  models.GuildNotifyJob{Aggregate: true, ScopeLabel: "WoW EU", Status: "UP"},
+			want: "All **WoW** servers in **EU** are now **UP**.",
+		},
+		{
+			name: "role mention",
+			job:  models.GuildNotifyJob{Aggregate: true, ScopeLabel: "FFXIV", Status: "DOWN", RoleID: "42"},
+			want: "<@&42> All **FFXIV** servers are now **DOWN**.",
+		},
+		{
+			name: "missing label fallback",
+			job:  models.GuildNotifyJob{Aggregate: true, Status: "UP"},
+			want: "All servers are now **UP**.",
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := formatAggregateContent(tc.job); got != tc.want {
+				t.Fatalf("formatAggregateContent() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestHandleRequest_noRecords(t *testing.T) {
 	t.Parallel()
 	h := newTestHandler(&mockDiscord{}, servermap.Mapping{})

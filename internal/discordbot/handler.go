@@ -37,6 +37,7 @@ type Database interface {
 	AddSubscription(ctx context.Context, sub models.Subscription) error
 	DeleteSubscription(ctx context.Context, guildID, channelID, serverID, subscriptionID string) error
 	ListSubscriptionsByGuild(ctx context.Context, guildID string) ([]models.Subscription, error)
+	ListSubscriptionsByServer(ctx context.Context, serverID string) ([]models.Subscription, error)
 }
 
 // ConfigProvider defines the required interface for fetching configurations.
@@ -52,6 +53,9 @@ type Handler struct {
 	discordPublicKey string
 	httpClient       *http.Client
 	discordBotToken  string
+
+	scopeStates  scopeStateStore
+	gameStatuses gameStatusLister
 
 	mappingCache  *servermap.CachedMapping
 	statusLimiter *statusRateLimiter
@@ -82,6 +86,8 @@ type HandlerDeps struct {
 	MappingCache     *servermap.CachedMapping
 	StatusLimiter    *statusRateLimiter
 	StatusCache      *statusResultCache
+	ScopeStates      scopeStateStore
+	GameStatuses     gameStatusLister
 }
 
 // NewHandlerFromDeps constructs a Handler from pre-resolved dependencies.
@@ -116,6 +122,8 @@ func NewHandlerFromDeps(deps HandlerDeps) (*Handler, error) {
 		mappingCache:     deps.MappingCache,
 		statusLimiter:    deps.StatusLimiter,
 		statusCache:      deps.StatusCache,
+		scopeStates:      deps.ScopeStates,
+		gameStatuses:     deps.GameStatuses,
 	}, nil
 }
 
@@ -163,8 +171,14 @@ func NewHandler(ctx context.Context) *Handler {
 	}
 	if statusTable := os.Getenv("DDB_GAME_SERVER_STATUS_TABLE_NAME"); statusTable != "" {
 		h.statusStore = db.NewDatabase(ddbClient, statusTable)
+		h.gameStatuses = h.statusStore.(gameStatusLister)
 	} else {
 		slog.Warn("DDB_GAME_SERVER_STATUS_TABLE_NAME not set; /status will be unavailable")
+	}
+	if scopeStateTable := os.Getenv("DDB_SCOPE_STATE_TABLE_NAME"); scopeStateTable != "" {
+		h.scopeStates = db.NewScopeStateStore(ddbClient, scopeStateTable)
+	} else {
+		slog.Warn("DDB_SCOPE_STATE_TABLE_NAME not set; wildcard (ALL) subscriptions will be unavailable")
 	}
 	return h
 }

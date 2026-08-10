@@ -173,11 +173,16 @@ func (h *Handler) processRecord(ctx context.Context, rec events.SQSMessage) erro
 		return nil
 	}
 
-	serverLabel := job.ServerLabel
-	if serverLabel == "" {
-		serverLabel = h.humanServerName(ctx, job.ServerID)
+	var content string
+	if job.Aggregate {
+		content = formatAggregateContent(job)
+	} else {
+		serverLabel := job.ServerLabel
+		if serverLabel == "" {
+			serverLabel = h.humanServerName(ctx, job.ServerID)
+		}
+		content = formatDiscordContent(job, serverLabel)
 	}
-	content := formatDiscordContent(job, serverLabel)
 
 	slog.Info("sending discord notification",
 		"serverID", job.ServerID,
@@ -274,6 +279,29 @@ func formatDiscordContent(job models.GuildNotifyJob, serverLabel string) string 
 		serverLabel = job.ServerID
 	}
 	return fmt.Sprintf("%sServer **%s** is now **%s**.", mention, serverLabel, job.Status)
+}
+
+// formatAggregateContent builds the content for an aggregate scope notification
+// (e.g. "All **WoW** servers in **EU** are now **DOWN**."). ScopeLabel is the
+// game display name ("WoW") or "WoW EU" for region scopes; the optional region
+// is the suffix after the last space.
+func formatAggregateContent(job models.GuildNotifyJob) string {
+	mention := ""
+	if job.RoleID != "" {
+		mention = fmt.Sprintf("<@&%s> ", job.RoleID)
+	}
+	status := job.Status
+	if status == "" {
+		status = "DOWN"
+	}
+	label := job.ScopeLabel
+	if label == "" {
+		return fmt.Sprintf("%sAll servers are now **%s**.", mention, status)
+	}
+	if idx := strings.LastIndex(label, " "); idx > 0 {
+		return fmt.Sprintf("%sAll **%s** servers in **%s** are now **%s**.", mention, label[:idx], label[idx+1:], status)
+	}
+	return fmt.Sprintf("%sAll **%s** servers are now **%s**.", mention, label, status)
 }
 
 func (h *Handler) humanServerName(ctx context.Context, technicalServerID string) string {

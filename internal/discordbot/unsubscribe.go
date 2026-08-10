@@ -8,6 +8,7 @@ import (
 
 	"github.com/ServersUp/servers-up-backend/internal/discord"
 	"github.com/ServersUp/servers-up-backend/internal/models"
+	"github.com/ServersUp/servers-up-backend/internal/scope"
 	"github.com/aws/aws-lambda-go/events"
 )
 
@@ -81,6 +82,16 @@ func (h *Handler) handleUnsubscribe(ctx context.Context, interaction discord.Int
 			"subscriptionID", match.SubscriptionID,
 		)
 		return h.discordResponse("An error occurred while trying to unsubscribe.")
+	}
+
+	if scope.IsWildcard(match.ServerID) && h.scopeStates != nil {
+		if err := h.deleteScopeStateIfEmpty(ctx, match.ServerID); err != nil {
+			slog.Warn("failed to clean up scope state after unsubscribe",
+				"error", err,
+				"guildID", interaction.GuildID,
+				"scopeKey", match.ServerID,
+			)
+		}
 	}
 
 	chLabel := h.channelPretty(ctx, interaction.GuildID, match.ChannelID)

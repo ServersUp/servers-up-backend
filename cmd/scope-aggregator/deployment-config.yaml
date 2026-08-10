@@ -1,0 +1,7 @@
+# /cmd/scope-aggregator/deployment-config.yaml
+
+type: lambda
+function_name: ServersUpScopeAggregatorLambda
+regions:
+  - name: us-east-1
+    alias: production
