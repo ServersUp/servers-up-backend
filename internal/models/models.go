@@ -37,11 +37,11 @@ type Subscription struct {
 	RoleName string `json:"role_name,omitempty" dynamodbav:"roleName,omitempty"`
 	// ServerLabel is the human-readable "game-server" label captured at subscribe time (e.g. "wow-illidan").
 	ServerLabel string `json:"server_label,omitempty" dynamodbav:"serverLabel,omitempty"`
-	// Scope indicates the target scope: "server" (default), "region", or "game".
-	// "region" and "game" are wildcard scopes whose partition key is a reserved
-	// "region#<gameId>#<region>" / "game#<gameId>" key (see internal/scope).
+	// Scope indicates the target scope: "server" (default) or "region".
+	// "region" is a wildcard scope whose partition key is a reserved
+	// "region#<gameId>#<region>" key (see internal/scope).
 	Scope string `json:"scope,omitempty" dynamodbav:"scope,omitempty"`
-	// GameID is the game for region/game scopes.
+	// GameID is the game for region scopes.
 	GameID string `json:"game_id,omitempty" dynamodbav:"gameId,omitempty"`
 	// Region is the region for region scopes.
 	Region string `json:"region,omitempty" dynamodbav:"region,omitempty"`
@@ -68,21 +68,20 @@ type GuildNotifyJob struct {
 	TargetType string `json:"targetType,omitempty"`
 	// WebhookURL is used when TargetType is "webhook".
 	WebhookURL string `json:"webhookUrl,omitempty"`
-	// Aggregate marks an aggregate scope notification (region/game wildcard)
+	// Aggregate marks an aggregate scope notification (region wildcard)
 	// rather than a per-server notification.
 	Aggregate bool `json:"aggregate,omitempty"`
-	// ScopeLabel is the human scope for aggregate messages, e.g. "WoW" or
-	// "WoW EU". Only set when Aggregate is true.
+	// ScopeLabel is the human scope for aggregate messages, e.g. "WoW EU".
+	// Only set when Aggregate is true.
 	ScopeLabel string `json:"scopeLabel,omitempty"`
-	// Scope is the scope type for aggregate jobs: "region" or "game".
+	// Scope is the scope type for aggregate jobs: "region".
 	Scope string `json:"scope,omitempty"`
 }
 
-// ScopeState tracks the aggregate state of a region/game subscription scope.
+// ScopeState tracks the aggregate state of a region subscription scope.
 // One row exists per currently subscribed wildcard scope.
 type ScopeState struct {
-	// ScopeKey is the wildcard partition key ("region#<gameId>#<region>" /
-	// "game#<gameId>").
+	// ScopeKey is the wildcard partition key ("region#<gameId>#<region>").
 	ScopeKey string `json:"scopeKey" dynamodbav:"scopeKey"`
 	// UpCount is the number of catalog members currently UP.
 	UpCount int `json:"upCount" dynamodbav:"upCount"`

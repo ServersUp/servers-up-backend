@@ -262,8 +262,8 @@ func (h *apiHandler) resolveServerViaMapping(ctx context.Context, game, region, 
 }
 
 // resolveTarget resolves the subscription target from the request fields. A
-// server requires a region; with only a region the target is every server in
-// that region; with neither the target is every server of the game.
+// server requires a region; with only a game + region the target is every
+// server in that region. Region is always required (game-only is not supported).
 func (h *apiHandler) resolveTarget(ctx context.Context, game, region, server string) (pk, label, scopeType, gameID, regionKey string, err error) {
 	gameNorm := servermap.NormalizeKey(game)
 	regionNorm := servermap.NormalizeKey(region)
@@ -287,26 +287,25 @@ func (h *apiHandler) resolveTarget(ctx context.Context, game, region, server str
 	if _, ok := mapping.Games[gameNorm]; !ok {
 		return "", "", "", "", "", fmt.Errorf("unknown game %s", game)
 	}
-
-	if regionNorm != "" {
-		regions, err := mapping.ListRegions(gameNorm)
-		if err != nil {
-			return "", "", "", "", "", fmt.Errorf("unknown game %s", game)
-		}
-		valid := false
-		for _, r := range regions {
-			if r == regionNorm {
-				valid = true
-				break
-			}
-		}
-		if !valid {
-			return "", "", "", "", "", fmt.Errorf("unknown region %s/%s", game, region)
-		}
-		return scope.Key(gameNorm, regionNorm), scope.Label(gameNorm, regionNorm), scope.TypeRegion, gameNorm, regionNorm, nil
+	if regionNorm == "" {
+		return "", "", "", "", "", fmt.Errorf("region is required")
 	}
 
-	return scope.Key(gameNorm, ""), scope.Label(gameNorm, ""), scope.TypeGame, gameNorm, "", nil
+	regions, err := mapping.ListRegions(gameNorm)
+	if err != nil {
+		return "", "", "", "", "", fmt.Errorf("unknown game %s", game)
+	}
+	valid := false
+	for _, r := range regions {
+		if r == regionNorm {
+			valid = true
+			break
+		}
+	}
+	if !valid {
+		return "", "", "", "", "", fmt.Errorf("unknown region %s/%s", game, region)
+	}
+	return scope.Key(gameNorm, regionNorm), scope.Label(gameNorm, regionNorm), scope.TypeRegion, gameNorm, regionNorm, nil
 }
 
 // ensureScopeBaseline creates the ScopeState row for a wildcard scope on first

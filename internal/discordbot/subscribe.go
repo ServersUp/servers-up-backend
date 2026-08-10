@@ -51,7 +51,7 @@ func (h *Handler) handleSubscribe(ctx context.Context, interaction discord.Inter
 			"channelID", interaction.ChannelID,
 			"serverName", serverName,
 		)
-		return h.discordResponse("The **server** option needs a **region**. Pick a region first, or leave both empty to watch **all servers** of a game.")
+		return h.discordResponse("The **server** option needs a **region**. Pick a region first.")
 	}
 
 	mapping, err := h.loadServerMapping(ctx)
@@ -60,7 +60,7 @@ func (h *Handler) handleSubscribe(ctx context.Context, interaction discord.Inter
 		return h.discordResponse("System error: Unable to load server configuration right now. Please try again in a bit.")
 	}
 
-	// Resolve the target (per-server, region scope, or game scope).
+	// Resolve the target (per-server or region scope).
 	target, resp := h.resolveSubscribeTarget(mapping, gameName, regionName, serverName)
 	if resp != nil {
 		return *resp, nil
@@ -148,17 +148,16 @@ func (h *Handler) handleSubscribe(ctx context.Context, interaction discord.Inter
 
 // subscribeTarget is a resolved subscription target.
 type subscribeTarget struct {
-	pk        string // partition key (concrete server ID or wildcard scope key)
+	pk        string // partition key (concrete server ID or region scope key)
 	label     string // human label
-	scopeType string // "", "region", or "game"
+	scopeType string // "" (server) or "region"
 	gameID    string
 	region    string
 }
 
 // resolveSubscribeTarget resolves the subscription target from the provided
-// options. gameName is required; a server requires a region; with only a
-// region the target is every server in that region; with neither the target is
-// every server of the game.
+// options. gameName and regionName are required; a server is optional. With a
+// game + region and no server the target is every server in that region.
 func (h *Handler) resolveSubscribeTarget(mapping servermap.Mapping, gameName, regionName, serverName string) (subscribeTarget, *events.LambdaFunctionURLResponse) {
 	if gameName == "" {
 		msg := "A **game** is required. Run `/subscribe` and pick a game."
@@ -170,6 +169,10 @@ func (h *Handler) resolveSubscribeTarget(mapping servermap.Mapping, gameName, re
 	}
 
 	if serverName != "" {
+		if regionName == "" {
+			msg := "The **server** option needs a **region**. Pick a region first."
+			return subscribeTarget{}, msgRespPtr(msg)
+		}
 		gameID, regionKey, serverKey, game, server, lookupErr := mapping.Lookup(gameName, regionName, serverName)
 		if lookupErr != nil {
 			msg := h.formatLookupError(mapping, lookupErr, gameName, regionName, serverName)
@@ -184,37 +187,33 @@ func (h *Handler) resolveSubscribeTarget(mapping servermap.Mapping, gameName, re
 		}, nil
 	}
 
-	if regionName != "" {
-		regions, err := mapping.ListRegions(gameName)
-		if err != nil {
-			msg := "Unknown game. Run `/subscribe` and pick from the suggestions."
-			return subscribeTarget{}, msgRespPtr(msg)
-		}
-		valid := false
-		for _, r := range regions {
-			if r == regionName {
-				valid = true
-				break
-			}
-		}
-		if !valid {
-			msg := fmt.Sprintf("Unknown region **%s** for that game. Run `/subscribe` and pick from the suggestions.", strings.ToUpper(regionName))
-			return subscribeTarget{}, msgRespPtr(msg)
-		}
-		return subscribeTarget{
-			pk:        scope.Key(gameName, regionName),
-			label:     scope.Label(gameName, regionName),
-			scopeType: scope.TypeRegion,
-			gameID:    gameName,
-			region:    regionName,
-		}, nil
+	if regionName == "" {
+		msg := "A **region** is required. Pick a region to watch every server in it, or a region + server to watch one server."
+		return subscribeTarget{}, msgRespPtr(msg)
 	}
 
+	regions, err := mapping.ListRegions(gameName)
+	if err != nil {
+		msg := "Unknown game. Run `/subscribe` and pick from the suggestions."
+		return subscribeTarget{}, msgRespPtr(msg)
+	}
+	valid := false
+	for _, r := range regions {
+		if r == regionName {
+			valid = true
+			break
+		}
+	}
+	if !valid {
+		msg := fmt.Sprintf("Unknown region **%s** for that game. Run `/subscribe` and pick from the suggestions.", strings.ToUpper(regionName))
+		return subscribeTarget{}, msgRespPtr(msg)
+	}
 	return subscribeTarget{
-		pk:        scope.Key(gameName, ""),
-		label:     scope.Label(gameName, ""),
-		scopeType: scope.TypeGame,
+		pk:        scope.Key(gameName, regionName),
+		label:     scope.Label(gameName, regionName),
+		scopeType: scope.TypeRegion,
 		gameID:    gameName,
+		region:    regionName,
 	}, nil
 }
 

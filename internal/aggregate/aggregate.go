@@ -43,8 +43,8 @@ func IsTerminal(state string) bool {
 // Counts computes the number of catalog members (total) and the number of
 // catalog members currently UP for a scope. statusByServer maps concrete server
 // IDs (serverid.Generate output) to their status; members absent from the map
-// or with a non-UP status count as not-UP. region may be "" for a game-wide
-// scope.
+// or with a non-UP status count as not-UP. region is the required region of
+// the scope (game + region is the minimum wildcard subscription).
 func Counts(mapping servermap.Mapping, statusByServer map[string]string, gameID, region string) (total, up int) {
 	gameID = servermap.NormalizeKey(gameID)
 	region = servermap.NormalizeKey(region)

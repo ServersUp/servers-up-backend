@@ -127,7 +127,7 @@ When status changes in DynamoDB, a stream-triggered job creator reads matching r
 - **Metrics**: `NotifySendError` in CloudWatch when Discord rejects a channel post.
 
 ### 4. Wildcard scope aggregator
-[`cmd/scope-aggregator`](cmd/scope-aggregator/) is a scheduled Lambda that powers **ALL servers** subscriptions (a whole game, or every server in a region). It derives an aggregate state per scope from `server-mapping.json` (the denominator) plus the current `GameServerStatus` snapshot:
+[`cmd/scope-aggregator`](cmd/scope-aggregator/) is a scheduled Lambda that powers **ALL servers** subscriptions (every server in a region, with a game + region). It derives an aggregate state per scope from `server-mapping.json` (the denominator) plus the current `GameServerStatus` snapshot:
 
 - Counts are always computed against the **catalog**, so a realm that vanishes (or a game not polled in the current region) never distorts the all-UP/all-DOWN signal.
 - A **5-minute settle window** ignores brief flips so alerts reflect stable state.

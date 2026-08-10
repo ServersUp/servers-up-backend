@@ -420,7 +420,7 @@ func TestFormatAggregateContent(t *testing.T) {
 		want string
 	}{
 		{
-			name: "game scope",
+			name: "label without region (fallback)",
 			job:  models.GuildNotifyJob{Aggregate: true, ScopeLabel: "WoW", Status: "DOWN"},
 			want: "All **WoW** servers are now **DOWN**.",
 		},

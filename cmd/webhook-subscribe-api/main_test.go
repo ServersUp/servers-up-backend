@@ -232,21 +232,17 @@ func TestSubscribeRegionScope(t *testing.T) {
 	}
 }
 
-func TestSubscribeGameScope(t *testing.T) {
+func TestSubscribeMissingRegionRejected(t *testing.T) {
 	store := &fakeStore{}
 	scopes := &fakeScopeStore{}
 	h := testScopeHandler(store, scopes)
 	body := `{"webhookUrl":"https://discord.com/api/webhooks/123/abc","game":"wow"}`
 	resp := invoke(h, body, allowedOrigin)
-	if resp.StatusCode != 200 {
-		t.Fatalf("expected 200 got %d body=%s", resp.StatusCode, resp.Body)
+	if resp.StatusCode != 400 {
+		t.Fatalf("expected 400 got %d body=%s", resp.StatusCode, resp.Body)
 	}
-	got := store.subs[0]
-	if got.ServerID != scope.Key("wow", "") || got.Scope != scope.TypeGame || got.Region != "" {
-		t.Fatalf("unexpected wildcard subscription: %+v", got)
-	}
-	if scopes.putCalls != 1 {
-		t.Fatalf("expected baseline put, got %d", scopes.putCalls)
+	if store.addCalled != 0 || scopes.putCalls != 0 {
+		t.Fatalf("game-only subscribe must not write: add=%d puts=%d", store.addCalled, scopes.putCalls)
 	}
 }
 
@@ -267,7 +263,7 @@ func TestResolveTargetScopes(t *testing.T) {
 	}{
 		{game: "wow", region: "us", server: "illidan", wantPK: "battlenet#us#57"},
 		{game: "wow", region: "us", wantPK: "region#wow#us", wantScope: "region"},
-		{game: "wow", wantPK: "game#wow", wantScope: "game"},
+		{game: "wow", wantErr: true},
 		{game: "wow", region: "eu", wantErr: true},
 		{game: "bogus", wantErr: true},
 	}

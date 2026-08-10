@@ -142,8 +142,7 @@ func main() {
 
 // delivery is a deduplicated aggregate notification pending delivery.
 type delivery struct {
-	specificity int
-	job         models.GuildNotifyJob
+	job models.GuildNotifyJob
 }
 
 // HandleRequest runs one aggregate pass. It is invoked on a schedule (EventBridge
@@ -203,7 +202,7 @@ func (h *Handler) loadMapping(ctx context.Context) (servermap.Mapping, error) {
 }
 
 // processScope advances one scope's aggregate state and, on a won claim,
-// collects its deliveries into pending (deduplicated most-specific-wins).
+// collects its deliveries into pending (deduplicated per delivery target).
 func (h *Handler) processScope(ctx context.Context, mapping servermap.Mapping, statusByServer map[string]string, cur *models.ScopeState, now int64, pending map[string]*delivery) error {
 	gameID := scope.GameID(cur.ScopeKey)
 	region := scope.Region(cur.ScopeKey)
@@ -267,20 +266,15 @@ func (h *Handler) processScope(ctx context.Context, mapping servermap.Mapping, s
 	return h.collectDeliveries(ctx, cur, pending)
 }
 
-// collectDeliveries loads the scope's subscriptions and adds deduplicated
-// aggregate deliveries for them. When overlapping scopes both fire in the same
-// tick, the most specific scope (region > game) wins for a delivery key.
+// collectDeliveries loads the scope's subscriptions and adds deliveries for
+// them. When the same delivery target has overlapping subscriptions in the
+// same tick, the first (most specific) delivery wins for a delivery key.
 func (h *Handler) collectDeliveries(ctx context.Context, cur *models.ScopeState, pending map[string]*delivery) error {
 	subs, err := h.subs.ListSubscriptionsByServer(ctx, cur.ScopeKey)
 	if err != nil {
 		return fmt.Errorf("list subscriptions for %s: %w", cur.ScopeKey, err)
 	}
 
-	scopeType := scope.TypeOf(cur.ScopeKey)
-	specificity := 1
-	if scopeType == scope.TypeRegion {
-		specificity = 2
-	}
 	label := scopeLabelFor(cur.ScopeKey)
 	statusStr := "DOWN"
 	if cur.State == scope.StateAllUp {
@@ -289,17 +283,16 @@ func (h *Handler) collectDeliveries(ctx context.Context, cur *models.ScopeState,
 
 	for _, sub := range subs {
 		key := deliveryKey(&sub)
-		if d, ok := pending[key]; ok && d.specificity >= specificity {
+		if _, ok := pending[key]; ok {
 			continue
 		}
 		pending[key] = &delivery{
-			specificity: specificity,
 			job: models.GuildNotifyJob{
 				ServerID:   cur.ScopeKey,
 				Status:     statusStr,
 				Aggregate:  true,
 				ScopeLabel: label,
-				Scope:      scopeType,
+				Scope:      scope.TypeRegion,
 				GuildID:    sub.GuildID,
 				ChannelID:  sub.ChannelID,
 				RoleID:     resolveRoleID(sub.Mention),
@@ -346,8 +339,7 @@ func (h *Handler) enqueuePending(ctx context.Context, pending map[string]*delive
 	return g.Wait()
 }
 
-// scopeLabelFor returns the message scope label for a wildcard key: "WoW" or
-// "WoW EU".
+// scopeLabelFor returns the message scope label for a wildcard key: "WoW EU".
 func scopeLabelFor(key string) string {
 	g := scope.GameDisplayName(scope.GameID(key))
 	if r := scope.Region(key); r != "" {
