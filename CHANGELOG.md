@@ -4,6 +4,15 @@ All notable user-facing changes to ServersUp Backend will be documented in this 
 
 This changelog is intended to be readable for end users and can be published directly to the project website.
 
+## v1.5 — 2026-08-10
+
+### Added
+- **Subscribe to ALL servers** — watch every realm of a game (or every realm in a region) with a single subscription instead of one per server.
+  - **Discord bot:** `/subscribe` now treats **region** and **server** as optional. Pick just a game to watch **all servers**, or a game + region to watch **every server in that region**. `region` becomes optional; `server` requires a region.
+  - **Webhook subscriptions:** the [install page](https://serversup.armasn.dev/install/) offers **ALL SERVERS** options (every region, or a whole region).
+- **Aggregate status alerts** — a scheduled aggregator derives the overall state of each scope from the server catalog and current statuses. You get **one alert when every server in the scope is down** and **one when they all recover** (after a ~5 minute settle window), instead of a flood of per-realm messages.
+- **No surprise first alert** — the current state is baselined at subscribe time, so subscribing to an all-DOWN scope doesn't instantly fire; notifications only start from the next real change.
+
 ## v1.4 — 2026-08-09
 
 ### Added

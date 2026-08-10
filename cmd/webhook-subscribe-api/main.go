@@ -14,11 +14,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ServersUp/servers-up-backend/internal/aggregate"
 	"github.com/ServersUp/servers-up-backend/internal/config"
 	"github.com/ServersUp/servers-up-backend/internal/db"
 	"github.com/ServersUp/servers-up-backend/internal/logsetup"
 	"github.com/ServersUp/servers-up-backend/internal/metrics"
 	"github.com/ServersUp/servers-up-backend/internal/models"
+	"github.com/ServersUp/servers-up-backend/internal/scope"
 	"github.com/ServersUp/servers-up-backend/internal/serverid"
 	"github.com/ServersUp/servers-up-backend/internal/servermap"
 	"github.com/aws/aws-lambda-go/events"
@@ -47,14 +49,32 @@ type SubscriptionStore interface {
 	AddSubscription(ctx context.Context, subscription models.Subscription) error
 }
 
+// scopeStateStore persists aggregate scope state.
+type scopeStateStore interface {
+	Get(ctx context.Context, scopeKey string) (*models.ScopeState, error)
+	Put(ctx context.Context, st models.ScopeState) error
+}
+
+// gameStatusLister reads current status rows for a game.
+type gameStatusLister interface {
+	ListServerStatusesByGame(ctx context.Context, gameID string) ([]models.GameServerStatus, error)
+}
+
+// mappingLoader loads configuration from S3; satisfied by *config.Provider.
+type mappingLoader interface {
+	LoadJSONFromS3(ctx context.Context, bucket, key string, target any) error
+}
+
 type apiHandler struct {
 	db               SubscriptionStore
 	mappingCache     *servermap.CachedMapping
-	configProvider   *config.Provider
+	configProvider   mappingLoader
 	configBucket     string
 	serverMappingKey string
 	httpClient       *http.Client
 	resolveServer    func(ctx context.Context, game, region, server string) (string, string, error)
+	scopes           scopeStateStore
+	gameStatuses     gameStatusLister
 }
 
 func NewHandler() *apiHandler {
@@ -83,8 +103,9 @@ func NewHandler() *apiHandler {
 	provider := config.NewProvider(ssm.NewFromConfig(cfg), s3.NewFromConfig(cfg))
 	mappingCache := servermap.NewCachedMapping(servermap.CacheTTLFromEnv())
 
+	ddbClient := dynamodb.NewFromConfig(cfg)
 	h := &apiHandler{
-		db:               db.NewDatabase(dynamodb.NewFromConfig(cfg), tableName),
+		db:               db.NewDatabase(ddbClient, tableName),
 		mappingCache:     mappingCache,
 		configProvider:   provider,
 		configBucket:     bucket,
@@ -92,6 +113,16 @@ func NewHandler() *apiHandler {
 		httpClient:       &http.Client{Timeout: 10 * time.Second},
 	}
 	h.resolveServer = h.resolveServerViaMapping
+	if statusTable := os.Getenv("DDB_GAME_SERVER_STATUS_TABLE_NAME"); statusTable != "" {
+		h.gameStatuses = db.NewDatabase(ddbClient, statusTable)
+	} else {
+		slog.Warn("DDB_GAME_SERVER_STATUS_TABLE_NAME not set; scope baselines will use an empty status snapshot")
+	}
+	if scopeTable := os.Getenv("DDB_SCOPE_STATE_TABLE_NAME"); scopeTable != "" {
+		h.scopes = db.NewScopeStateStore(ddbClient, scopeTable)
+	} else {
+		slog.Warn("DDB_SCOPE_STATE_TABLE_NAME not set; wildcard (ALL) subscriptions will be unavailable")
+	}
 	return h
 }
 
@@ -148,7 +179,7 @@ func (h *apiHandler) HandleRequest(ctx context.Context, event events.LambdaFunct
 		return errResponse(400, "invalid webhook url", headers), nil
 	}
 
-	techID, label, err := h.resolveServer(ctx, req.Game, req.Region, req.Server)
+	pk, label, scopeType, gameID, regionKey, err := h.resolveTarget(ctx, req.Game, req.Region, req.Server)
 	if err != nil {
 		return errResponse(400, err.Error(), headers), nil
 	}
@@ -158,7 +189,7 @@ func (h *apiHandler) HandleRequest(ctx context.Context, event events.LambdaFunct
 		return errResponse(400, "webhook ownership proof failed", headers), nil
 	}
 
-	existing, err := h.db.ListSubscriptionsByServer(ctx, techID)
+	existing, err := h.db.ListSubscriptionsByServer(ctx, pk)
 	if err != nil {
 		slog.Error("failed to list subscriptions", "error", err)
 		return errResponse(500, "failed to check existing subscriptions", headers), nil
@@ -170,12 +201,15 @@ func (h *apiHandler) HandleRequest(ctx context.Context, event events.LambdaFunct
 	}
 
 	subscription := models.Subscription{
-		ServerID:       techID,
+		ServerID:       pk,
 		SubscriptionID: fmt.Sprintf("%d", time.Now().UnixNano()),
 		Mention:        req.RoleID,
 		ServerLabel:    label,
 		TargetType:     "webhook",
 		WebhookURL:     webhookURL,
+		Scope:          scopeType,
+		GameID:         gameID,
+		Region:         regionKey,
 	}
 
 	if err := h.db.AddSubscription(ctx, subscription); err != nil {
@@ -183,7 +217,15 @@ func (h *apiHandler) HandleRequest(ctx context.Context, event events.LambdaFunct
 		return errResponse(500, "failed to save subscription", headers), nil
 	}
 
-	metrics.EmitCount(metrics.Namespace, "SubscriptionWrite", map[string]string{"target": "webhook"}, 1)
+	if scopeType != "" {
+		if err := h.ensureScopeBaseline(ctx, gameID, regionKey, pk); err != nil {
+			// The aggregator defensively baselines on its next run; never fail
+			// the subscription for a baseline hiccup.
+			slog.Warn("failed to ensure scope baseline", "error", err, "scopeKey", pk)
+		}
+	}
+
+	metrics.EmitCount(metrics.Namespace, "SubscriptionWrite", map[string]string{"target": "webhook", "scope": scopeType}, 1)
 
 	return okResponse(headers), nil
 }
@@ -217,6 +259,100 @@ func (h *apiHandler) resolveServerViaMapping(ctx context.Context, game, region, 
 	techID := serverid.Generate(g.Provider, regionKey, s.Identifier)
 	label := servermap.DisplayLabel(gameID, regionKey, serverKey)
 	return techID, label, nil
+}
+
+// resolveTarget resolves the subscription target from the request fields. A
+// server requires a region; with only a region the target is every server in
+// that region; with neither the target is every server of the game.
+func (h *apiHandler) resolveTarget(ctx context.Context, game, region, server string) (pk, label, scopeType, gameID, regionKey string, err error) {
+	gameNorm := servermap.NormalizeKey(game)
+	regionNorm := servermap.NormalizeKey(region)
+	serverNorm := servermap.NormalizeKey(server)
+
+	if serverNorm != "" && regionNorm == "" {
+		return "", "", "", "", "", fmt.Errorf("server requires a region")
+	}
+	if serverNorm != "" {
+		techID, label, err := h.resolveServer(ctx, gameNorm, regionNorm, serverNorm)
+		return techID, label, "", gameNorm, regionNorm, err
+	}
+
+	mapping, err := h.loadMapping(ctx)
+	if err != nil {
+		return "", "", "", "", "", err
+	}
+	if gameNorm == "" {
+		return "", "", "", "", "", fmt.Errorf("game is required")
+	}
+	if _, ok := mapping.Games[gameNorm]; !ok {
+		return "", "", "", "", "", fmt.Errorf("unknown game %s", game)
+	}
+
+	if regionNorm != "" {
+		regions, err := mapping.ListRegions(gameNorm)
+		if err != nil {
+			return "", "", "", "", "", fmt.Errorf("unknown game %s", game)
+		}
+		valid := false
+		for _, r := range regions {
+			if r == regionNorm {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			return "", "", "", "", "", fmt.Errorf("unknown region %s/%s", game, region)
+		}
+		return scope.Key(gameNorm, regionNorm), scope.Label(gameNorm, regionNorm), scope.TypeRegion, gameNorm, regionNorm, nil
+	}
+
+	return scope.Key(gameNorm, ""), scope.Label(gameNorm, ""), scope.TypeGame, gameNorm, "", nil
+}
+
+// ensureScopeBaseline creates the ScopeState row for a wildcard scope on first
+// subscribe, computing counts from the catalog and current statuses so the
+// current state never triggers a notification.
+func (h *apiHandler) ensureScopeBaseline(ctx context.Context, gameID, region, scopeKey string) error {
+	if h.scopes == nil {
+		return nil
+	}
+	existing, err := h.scopes.Get(ctx, scopeKey)
+	if err != nil {
+		return err
+	}
+	if existing != nil {
+		return nil
+	}
+
+	statusByServer := map[string]string{}
+	if h.gameStatuses != nil {
+		rows, err := h.gameStatuses.ListServerStatusesByGame(ctx, gameID)
+		if err != nil {
+			return err
+		}
+		for _, row := range rows {
+			statusByServer[row.ServerID] = row.Status
+		}
+	}
+
+	mapping, err := h.loadMapping(ctx)
+	if err != nil {
+		return err
+	}
+	total, up := aggregate.Counts(mapping, statusByServer, gameID, region)
+	now := time.Now().Unix()
+	state := aggregate.DeriveState(total, up)
+	st := models.ScopeState{
+		ScopeKey:            scopeKey,
+		UpCount:             up,
+		DownCount:           total - up,
+		TotalCount:          total,
+		State:               state,
+		StateSince:          now,
+		LastNotifiedEpisode: aggregate.Episode(state, now),
+		UpdatedAt:           now,
+	}
+	return h.scopes.Put(ctx, st)
 }
 
 func (h *apiHandler) loadMapping(ctx context.Context) (servermap.Mapping, error) {

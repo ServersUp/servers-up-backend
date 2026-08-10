@@ -83,16 +83,19 @@ Player populations cluster on certain regions and realms, so one status change c
 │   ├── discord-bot-api/                    # Lambda entrypoint for Discord interactions
 │   ├── discord-guild-notify-job-creator/   # Lambda: DDB stream → SQS notify jobs
 │   ├── discord-guild-notify-lambda/        # Lambda: SQS → Discord channel messages
+│   ├── scope-aggregator/                   # Lambda: scheduled all-UP/all-DOWN aggregates for wildcard scopes
 │   └── config-reader/                      # CI utility: deployment matrices from YAML
 ├── internal/
 │   ├── bnet/                    # Battle.net API client and models
 │   ├── ffxivlodestone/          # FFXIV Lodestone HTML + frontier JSON parsing
 │   ├── ffxivpoller/             # FFXIV polling Lambda handler
 │   ├── config/                  # AWS config provider (S3/SSM)
-│   ├── db/                      # DynamoDB access (status + subscriptions)
+│   ├── db/                      # DynamoDB access (status, subscriptions, scope state)
 │   ├── discord/                 # Interaction types and signature verification
 │   ├── discordbot/              # Slash command handlers (subscribe, status, etc.)
 │   ├── servermap/               # server-mapping.json loader and lookup
+│   ├── aggregate/               # Wildcard scope state derivation (counts, episodes, settle)
+│   ├── scope/                   # Scope keys/labels + aggregate event schema
 │   └── models/                  # Shared data models
 └── .github/workflows/           # Unified dynamic deployment pipeline
 ```
@@ -122,6 +125,15 @@ When status changes in DynamoDB, a stream-triggered job creator reads matching r
 - **Queues**: primary `discord-guild-notify-jobs`; dead-letter `discord-guild-notify-jobs-dlq`.
 - **Reliability**: transient send failures retry on the primary queue; clearly permanent failures are dropped; repeatedly failing jobs land in the dead-letter queue for operator review and redrive.
 - **Metrics**: `NotifySendError` in CloudWatch when Discord rejects a channel post.
+
+### 4. Wildcard scope aggregator
+[`cmd/scope-aggregator`](cmd/scope-aggregator/) is a scheduled Lambda that powers **ALL servers** subscriptions (a whole game, or every server in a region). It derives an aggregate state per scope from `server-mapping.json` (the denominator) plus the current `GameServerStatus` snapshot:
+
+- Counts are always computed against the **catalog**, so a realm that vanishes (or a game not polled in the current region) never distorts the all-UP/all-DOWN signal.
+- A **5-minute settle window** ignores brief flips so alerts reflect stable state.
+- Transitions are **exactly-once**: `ScopeState` rows are claimed with a conditional `LastNotifiedEpisode` update (CAS) before jobs are enqueued to `discord-guild-notify-jobs`; overlapping schedules are safe.
+- Current state is **baselined at subscribe time** (bot and webhook API), so the first alert only fires on a real change after subscribing.
+- Shared state derivation lives in **`internal/aggregate`**; scope keys/labels and the aggregate event schema in **`internal/scope`**.
 
 ## ⚙️ CI/CD Pipeline
 

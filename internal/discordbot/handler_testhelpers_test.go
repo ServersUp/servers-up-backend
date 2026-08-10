@@ -15,9 +15,10 @@ import (
 
 // MockDatabase implements the Database interface for testing.
 type MockDatabase struct {
-	AddFunc    func(ctx context.Context, sub models.Subscription) error
-	DeleteFunc func(ctx context.Context, guildID, channelID, serverID, subscriptionID string) error
-	ListFunc   func(ctx context.Context, guildID string) ([]models.Subscription, error)
+	AddFunc        func(ctx context.Context, sub models.Subscription) error
+	DeleteFunc     func(ctx context.Context, guildID, channelID, serverID, subscriptionID string) error
+	ListFunc       func(ctx context.Context, guildID string) ([]models.Subscription, error)
+	ListByServerFn func(ctx context.Context, serverID string) ([]models.Subscription, error)
 }
 
 func (m *MockDatabase) AddSubscription(ctx context.Context, sub models.Subscription) error {
@@ -28,6 +29,12 @@ func (m *MockDatabase) DeleteSubscription(ctx context.Context, guildID, channelI
 }
 func (m *MockDatabase) ListSubscriptionsByGuild(ctx context.Context, guildID string) ([]models.Subscription, error) {
 	return m.ListFunc(ctx, guildID)
+}
+func (m *MockDatabase) ListSubscriptionsByServer(ctx context.Context, serverID string) ([]models.Subscription, error) {
+	if m.ListByServerFn != nil {
+		return m.ListByServerFn(ctx, serverID)
+	}
+	return nil, nil
 }
 
 // MockConfig implements the ConfigProvider interface for testing.
@@ -82,6 +89,49 @@ type testHandlerFixture struct {
 	priv    ed25519.PrivateKey
 	db      *MockDatabase
 	config  *MockConfig
+	scopes  *MockScopeStateStore
+	status  *MockGameStatusLister
+}
+
+// MockScopeStateStore implements the scopeStateStore interface for testing.
+type MockScopeStateStore struct {
+	states      map[string]models.ScopeState
+	PutCalls    []models.ScopeState
+	DeleteCalls []string
+}
+
+func (m *MockScopeStateStore) Get(_ context.Context, key string) (*models.ScopeState, error) {
+	if m.states == nil {
+		return nil, nil
+	}
+	st, ok := m.states[key]
+	if !ok {
+		return nil, nil
+	}
+	return &st, nil
+}
+
+func (m *MockScopeStateStore) Put(_ context.Context, st models.ScopeState) error {
+	if m.states == nil {
+		m.states = map[string]models.ScopeState{}
+	}
+	m.PutCalls = append(m.PutCalls, st)
+	m.states[st.ScopeKey] = st
+	return nil
+}
+
+func (m *MockScopeStateStore) Delete(_ context.Context, key string) error {
+	m.DeleteCalls = append(m.DeleteCalls, key)
+	return nil
+}
+
+// MockGameStatusLister implements the gameStatusLister interface for testing.
+type MockGameStatusLister struct {
+	ByGame map[string][]models.GameServerStatus
+}
+
+func (m *MockGameStatusLister) ListServerStatusesByGame(_ context.Context, gameID string) ([]models.GameServerStatus, error) {
+	return m.ByGame[gameID], nil
 }
 
 func newTestHandlerFixture(t *testing.T) *testHandlerFixture {
@@ -92,17 +142,20 @@ func newTestHandlerFixture(t *testing.T) *testHandlerFixture {
 	}
 	mockDB := &MockDatabase{}
 	mockCfg := testMockConfig()
+	scopes := &MockScopeStateStore{}
 	h := &Handler{
 		database:         mockDB,
 		configProvider:   mockCfg,
 		discordPublicKey: hex.EncodeToString(pub),
 		mappingCache:     servermap.NewCachedMapping(0),
+		scopeStates:      scopes,
 	}
 	return &testHandlerFixture{
 		handler: h,
 		priv:    priv,
 		db:      mockDB,
 		config:  mockCfg,
+		scopes:  scopes,
 	}
 }
 
