@@ -68,32 +68,23 @@ func TestHandleRequest_SubscribeRegionScope(t *testing.T) {
 	}
 }
 
-func TestHandleRequest_SubscribeGameScope(t *testing.T) {
+func TestHandleRequest_SubscribeMissingRegionRejected(t *testing.T) {
 	t.Parallel()
 	f := newTestHandlerFixture(t)
 
-	var created models.Subscription
-	f.db.ListFunc = func(ctx context.Context, guildID string) ([]models.Subscription, error) {
-		return nil, nil
-	}
+	var addCalls int
 	f.db.AddFunc = func(ctx context.Context, sub models.Subscription) error {
-		created = sub
+		addCalls++
 		return nil
 	}
 
 	content := subscribeRespContent(t, f, subscribeBody(`{"name": "game", "value": "wow"}`))
 
-	if created.ServerID != scope.Key("wow", "") {
-		t.Fatalf("unexpected pk: %s", created.ServerID)
+	if addCalls != 0 {
+		t.Fatalf("expected no subscription, got %d calls", addCalls)
 	}
-	if created.Scope != scope.TypeGame || created.GameID != "wow" || created.Region != "" {
-		t.Fatalf("unexpected scope fields: %+v", created)
-	}
-	if created.ServerLabel != "All WoW servers" {
-		t.Fatalf("unexpected label: %q", created.ServerLabel)
-	}
-	if !strings.Contains(content, "All WoW servers") {
-		t.Fatalf("confirmation should mention scope, got %q", content)
+	if !strings.Contains(content, "**region** is required") {
+		t.Fatalf("expected region-required message, got %q", content)
 	}
 }
 
@@ -154,10 +145,10 @@ func TestResolveSubscribeTarget(t *testing.T) {
 		wantScope  string
 		wantError  bool
 	}{
-		{name: "game scope", game: "wow", wantPK: "game#wow", wantLabel: "All WoW servers", wantScope: "game"},
 		{name: "region scope", game: "wow", region: "us", wantPK: "region#wow#us", wantLabel: "All WoW servers — US", wantScope: "region"},
 		{name: "server scope", game: "wow", region: "us", server: "illidan", wantPK: "battlenet#us#57", wantLabel: "wow-us-illidan"},
 		{name: "server without region", game: "wow", server: "illidan", wantError: true},
+		{name: "missing region", game: "wow", wantError: true},
 		{name: "unknown region", game: "wow", region: "eu", wantError: true},
 		{name: "missing game", wantError: true},
 		{name: "unknown game", game: "bogus", wantError: true},

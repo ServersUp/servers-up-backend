@@ -138,7 +138,7 @@ func testHandler(fs *fakeScopeStore, subs *fakeSubLister, statuses *fakeStatusLi
 func TestProcessScope_baselineInitializesWithoutNotify(t *testing.T) {
 	fs := &fakeScopeStore{}
 	h := testHandler(fs, &fakeSubLister{}, &fakeStatusLister{}, &fakeSender{}, 0)
-	cur := models.ScopeState{ScopeKey: scope.Key("wow", "")}
+	cur := models.ScopeState{ScopeKey: scope.Key("wow", "us")}
 	pending := map[string]*delivery{}
 
 	if err := h.processScope(context.Background(), testMapping(), testStatuses(), &cur, 100, pending); err != nil {
@@ -163,7 +163,7 @@ func TestProcessScope_stateChangeToMixedNoNotify(t *testing.T) {
 	fs := &fakeScopeStore{}
 	h := testHandler(fs, &fakeSubLister{}, &fakeStatusLister{}, &fakeSender{}, 0)
 	cur := models.ScopeState{
-		ScopeKey:            scope.Key("wow", ""),
+		ScopeKey:            scope.Key("wow", "us"),
 		TotalCount:          3,
 		UpCount:             3,
 		State:               scope.StateAllUp,
@@ -194,7 +194,7 @@ func TestProcessScope_terminalSettleNotElapsed(t *testing.T) {
 	fs := &fakeScopeStore{claimOK: true}
 	h := testHandler(fs, &fakeSubLister{}, &fakeStatusLister{}, &fakeSender{}, 5*time.Minute)
 	cur := models.ScopeState{
-		ScopeKey:            scope.Key("wow", ""),
+		ScopeKey:            scope.Key("wow", "us"),
 		TotalCount:          3,
 		UpCount:             0,
 		State:               scope.StateAllDown,
@@ -214,13 +214,13 @@ func TestProcessScope_terminalSettleNotElapsed(t *testing.T) {
 func TestProcessScope_terminalSettleElapsedClaimsAndCollects(t *testing.T) {
 	fs := &fakeScopeStore{claimOK: true}
 	subs := &fakeSubLister{byServer: map[string][]models.Subscription{
-		scope.Key("wow", ""): {
+		scope.Key("wow", "us"): {
 			{GuildID: "g1", ChannelID: "c1", Mention: "<@&7>", TargetType: "bot"},
 		},
 	}}
 	h := testHandler(fs, subs, &fakeStatusLister{}, &fakeSender{}, 5*time.Minute)
 	cur := models.ScopeState{
-		ScopeKey:   scope.Key("wow", ""),
+		ScopeKey:   scope.Key("wow", "us"),
 		TotalCount: 3,
 		UpCount:    0,
 		State:      scope.StateAllDown,
@@ -241,7 +241,7 @@ func TestProcessScope_terminalSettleElapsedClaimsAndCollects(t *testing.T) {
 	for _, v := range pending {
 		d = v
 	}
-	if !d.job.Aggregate || d.job.ScopeLabel != "WoW" || d.job.Status != "DOWN" || d.job.RoleID != "7" {
+	if !d.job.Aggregate || d.job.ScopeLabel != "WoW US" || d.job.Status != "DOWN" || d.job.RoleID != "7" {
 		t.Fatalf("unexpected aggregate job: %+v", d.job)
 	}
 }
@@ -251,7 +251,7 @@ func TestProcessScope_alreadyNotifiedSkips(t *testing.T) {
 	h := testHandler(fs, &fakeSubLister{}, &fakeStatusLister{}, &fakeSender{}, 5*time.Minute)
 	ep := aggregate.Episode(scope.StateAllDown, 50)
 	cur := models.ScopeState{
-		ScopeKey:            scope.Key("wow", ""),
+		ScopeKey:            scope.Key("wow", "us"),
 		TotalCount:          3,
 		UpCount:             0,
 		State:               scope.StateAllDown,
@@ -272,7 +272,7 @@ func TestProcessScope_claimLostSkips(t *testing.T) {
 	fs := &fakeScopeStore{claimOK: false}
 	h := testHandler(fs, &fakeSubLister{}, &fakeStatusLister{}, &fakeSender{}, 5*time.Minute)
 	cur := models.ScopeState{
-		ScopeKey:   scope.Key("wow", ""),
+		ScopeKey:   scope.Key("wow", "us"),
 		TotalCount: 3,
 		UpCount:    0,
 		State:      scope.StateAllDown,
@@ -323,10 +323,9 @@ func TestHandleRequest_endToEndEnqueuesAggregateJob(t *testing.T) {
 	}
 }
 
-func TestHandleRequest_overlapDedupeRegionWins(t *testing.T) {
+func TestHandleRequest_duplicateSubscriptionRowsDedupe(t *testing.T) {
 	now := time.Now().Unix()
 	regionKey := scope.Key("wow", "us")
-	gameKey := scope.Key("wow", "")
 	fs := &fakeScopeStore{claimOK: true, states: map[string]models.ScopeState{
 		regionKey: {
 			ScopeKey:   regionKey,
@@ -335,18 +334,13 @@ func TestHandleRequest_overlapDedupeRegionWins(t *testing.T) {
 			State:      scope.StateAllDown,
 			StateSince: now - 400,
 		},
-		gameKey: {
-			ScopeKey:   gameKey,
-			TotalCount: 3,
-			UpCount:    0,
-			State:      scope.StateAllDown,
-			StateSince: now - 400,
-		},
 	}}
-	// same channel subscribed to both scopes
+	// same channel subscribed twice to the same region scope
 	subs := &fakeSubLister{byServer: map[string][]models.Subscription{
-		regionKey: {{GuildID: "g1", ChannelID: "c1", TargetType: "bot"}},
-		gameKey:   {{GuildID: "g1", ChannelID: "c1", TargetType: "bot"}},
+		regionKey: {
+			{GuildID: "g1", ChannelID: "c1", TargetType: "bot"},
+			{GuildID: "g1", ChannelID: "c1", TargetType: "bot"},
+		},
 	}}
 	sender := &fakeSender{}
 	h := testHandler(fs, subs, &fakeStatusLister{byGame: statusRowsByGame(testStatuses())}, sender, 5*time.Minute)
@@ -358,7 +352,7 @@ func TestHandleRequest_overlapDedupeRegionWins(t *testing.T) {
 		t.Fatalf("expected 1 deduped SQS job, got %d", len(sender.sent))
 	}
 	if sender.sent[0].Scope != scope.TypeRegion {
-		t.Fatalf("expected region scope to win, got %s", sender.sent[0].Scope)
+		t.Fatalf("expected region scope, got %s", sender.sent[0].Scope)
 	}
 }
 
@@ -370,9 +364,6 @@ func TestHandleRequest_noActiveScopesIdle(t *testing.T) {
 }
 
 func TestScopeLabelFor(t *testing.T) {
-	if got := scopeLabelFor(scope.Key("wow", "")); got != "WoW" {
-		t.Fatalf("game scope label = %q", got)
-	}
 	if got := scopeLabelFor(scope.Key("wow", "eu")); got != "WoW EU" {
 		t.Fatalf("region scope label = %q", got)
 	}

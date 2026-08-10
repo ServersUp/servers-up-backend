@@ -271,8 +271,8 @@ func formatDiscordContent(job models.GuildNotifyJob, serverLabel string) string 
 
 // formatAggregateContent builds the content for an aggregate scope notification
 // (e.g. "All **WoW** servers in **EU** are now **DOWN**."). ScopeLabel is the
-// game display name ("WoW") or "WoW EU" for region scopes; the optional region
-// is the suffix after the last space.
+// human scope ("WoW EU" for a region scope); the optional region is the suffix
+// after the last space, with a no-region label falling back to a plain message.
 func formatAggregateContent(job models.GuildNotifyJob) string {
 	mention := ""
 	if job.RoleID != "" {
