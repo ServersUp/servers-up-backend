@@ -113,7 +113,7 @@ Both pollers use structured logging (`slog`) and CloudWatch metrics for poll suc
 ### 2. Discord Bot API
 A Lambda Function URL-backed API that processes Discord interactions. Command logic lives in **`internal/discordbot`**; [`cmd/discord-bot-api`](cmd/discord-bot-api/) is a thin entrypoint.
 
-*   **Slash commands**: `/subscribe`, `/unsubscribe`, `/subscriptions`, `/games`, `/regions`, `/servers`, `/status`, `/help`.
+*   **Slash commands**: `/subscribe`, `/unsubscribe`, `/subscriptions`, `/games`, `/regions`, `/servers`, `/status`, `/help`, and `/feedback` / `/report` (implemented, not yet live).
 *   **Discovery & lookup**: `/games`, `/regions`, and `/servers` list configured games, regions, and servers from S3 `server-mapping.json` (with autocomplete; regions depend on the selected game). `/status` reads the current **UP/DOWN** value from the status DynamoDB table.
 *   **Rate limiting**: `/status` is capped per user and per guild in-process (warm Lambda instances) to limit DynamoDB reads; over-limit replies are ephemeral.
 *   **Dynamic mapping**: Human names (e.g. `illidan`) map to provider/region/identifier via `server-mapping.json`.
@@ -134,6 +134,16 @@ When status changes in DynamoDB, a stream-triggered job creator reads matching r
 - Transitions are **exactly-once**: `ScopeState` rows are claimed with a conditional `LastNotifiedEpisode` update (CAS) before jobs are enqueued to `discord-guild-notify-jobs`; overlapping schedules are safe.
 - Current state is **baselined at subscribe time** (bot and webhook API), so the first alert only fires on a real change after subscribing.
 - Shared state derivation lives in **`internal/aggregate`**; scope keys/labels and the aggregate event schema in **`internal/scope`**.
+
+### 5. Feedback & reporting (implemented, not yet live)
+`/feedback` and `/report` are implemented in the Discord bot and deliver messages to the maintainers by email through Amazon SES. They are **not registered or live** until the feedback email pipeline is deployed and the commands are registered.
+
+- **Delivery**: a feedback Lambda sends email via SES using `SES_FROM_EMAIL` and `SES_TO_EMAIL` environment variables; the Discord bot uses the same env contract.
+- **Website**: the public site posts plain JSON (`message` plus optional `subscriptionId`) to a feedback endpoint at the canonical origin `https://serversup.armasn.dev`. The site's `FEEDBACK_API_URL` is intentionally empty until Terraform output supplies the real Function URL.
+- **Discord `/report`** requires a bounded `subscription_id`. No user reply-email field is collected.
+- **Logging**: safe logs only — no message body, raw request, or provider content is logged.
+- **Not in this release:** rate limiting, honeypot/timing traps, abuse protection, CAPTCHA, WAF, duplicate suppression, or idempotency.
+- See [`docs/feedback-email.md`](docs/feedback-email.md) for the operational runbook.
 
 ## ⚙️ CI/CD Pipeline
 
