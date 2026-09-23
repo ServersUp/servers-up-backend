@@ -116,5 +116,38 @@
   {
     "name": "help",
     "description": "Show help"
+  },
+  {
+    "name": "feedback",
+    "description": "Send general feedback",
+    "options": [
+      {
+        "type": 3,
+        "name": "message",
+        "description": "Your feedback",
+        "required": true,
+        "max_length": 4000
+      }
+    ]
+  },
+  {
+    "name": "report",
+    "description": "Report a subscription issue",
+    "options": [
+      {
+        "type": 3,
+        "name": "message",
+        "description": "What went wrong",
+        "required": true,
+        "max_length": 4000
+      },
+      {
+        "type": 3,
+        "name": "subscription_id",
+        "description": "Subscription to report",
+        "required": true,
+        "max_length": 128
+      }
+    ]
   }
 ]

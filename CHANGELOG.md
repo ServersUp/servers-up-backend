@@ -4,6 +4,15 @@ All notable user-facing changes to ServersUp Backend will be documented in this 
 
 This changelog is intended to be readable for end users and can be published directly to the project website.
 
+## Unreleased
+
+### Added
+- **`/feedback` and `/report` (implemented, not yet live)** — Discord commands for sending general feedback and reporting a specific subscription. Both are implemented in the backend but are **not registered or live** until the feedback email pipeline is deployed and the commands are registered.
+  - **`/feedback`** — send a free-form message to the project maintainers.
+  - **`/report`** — report an issue with a specific subscription; requires a bounded `subscription_id`.
+  - Messages are delivered by email via Amazon SES. No user reply-email field is collected.
+  - **Not in this release:** rate limiting, honeypot/timing traps, abuse protection, CAPTCHA, WAF, duplicate suppression, or idempotency.
+
 ## v1.5 — 2026-08-10
 
 ### Added

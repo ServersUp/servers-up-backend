@@ -14,12 +14,14 @@ import (
 	"github.com/ServersUp/servers-up-backend/internal/config"
 	"github.com/ServersUp/servers-up-backend/internal/db"
 	"github.com/ServersUp/servers-up-backend/internal/discord"
+	"github.com/ServersUp/servers-up-backend/internal/feedback"
 	"github.com/ServersUp/servers-up-backend/internal/models"
 	"github.com/ServersUp/servers-up-backend/internal/servermap"
 	"github.com/aws/aws-lambda-go/events"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/ses"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 )
 
@@ -53,6 +55,7 @@ type Handler struct {
 	discordPublicKey string
 	httpClient       *http.Client
 	discordBotToken  string
+	mailer           feedback.Mailer
 
 	scopeStates  scopeStateStore
 	gameStatuses gameStatusLister
@@ -134,6 +137,13 @@ func NewHandler(ctx context.Context) *Handler {
 		os.Exit(1)
 	}
 
+	sesClient := ses.NewFromConfig(cfg)
+	mailer, err := feedback.NewSESMailer(sesClient, os.Getenv("SES_FROM_EMAIL"), os.Getenv("SES_TO_EMAIL"))
+	if err != nil {
+		slog.Error("failed to create SES mailer", "error", err)
+		os.Exit(1)
+	}
+
 	publicKeyPath := os.Getenv("DISCORD_BOT_PUBLIC_KEY_PATH")
 	if publicKeyPath == "" {
 		slog.Error("missing required env DISCORD_BOT_PUBLIC_KEY_PATH")
@@ -165,6 +175,7 @@ func NewHandler(ctx context.Context) *Handler {
 		discordPublicKey: publicKey,
 		httpClient:       httpClient,
 		discordBotToken:  botToken,
+		mailer:           mailer,
 		mappingCache:     servermap.NewCachedMapping(servermap.CacheTTLFromEnv()),
 		statusLimiter:    newStatusRateLimiter(),
 		statusCache:      newStatusResultCache(),
@@ -261,6 +272,12 @@ func (h *Handler) HandleRequest(ctx context.Context, request events.LambdaFuncti
 			return logInteractionMarshalErr(ctx, resp, err)
 		case "help":
 			resp, err := h.handleHelp()
+			return logInteractionMarshalErr(ctx, resp, err)
+		case "feedback":
+			resp, err := h.handleFeedback(ctx, interaction, data)
+			return logInteractionMarshalErr(ctx, resp, err)
+		case "report":
+			resp, err := h.handleReport(ctx, interaction, data)
 			return logInteractionMarshalErr(ctx, resp, err)
 		default:
 			resp, err := h.discordResponse("Unknown command. Use `/help` to see what I can do.")

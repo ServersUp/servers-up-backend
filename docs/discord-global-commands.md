@@ -1,6 +1,6 @@
 # Discord global slash commands (registration)
 
-Register commands with the Discord REST API after deploying bot code that handles them.
+Register commands with the Discord REST API only after the deployed handler is verified.
 
 Replace:
 
