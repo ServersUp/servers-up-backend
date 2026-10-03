@@ -4,6 +4,11 @@ All notable user-facing changes to ServersUp Backend will be documented in this 
 
 This changelog is intended to be readable for end users and can be published directly to the project website.
 
+## v1.6 — 2026-10-04
+
+### Added
+- **DM subscriptions** — DM the bot and use `/subscribe`, `/unsubscribe`, and `/subscriptions` from your DMs. Alerts for DM subscriptions are sent privately to your DMs instead of a guild channel, with no role mention. You can keep up to **25 DM subscriptions** per user; each server can be subscribed at most once in your DMs.
+
 ## v1.5 — 2026-08-10
 
 ### Added

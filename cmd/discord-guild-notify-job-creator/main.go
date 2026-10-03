@@ -138,6 +138,7 @@ func (h *Handler) processRecord(ctx context.Context, rec *events.DynamoDBEventRe
 				ServerLabel: sub.ServerLabel,
 				TargetType:  sub.TargetType,
 				WebhookURL:  sub.WebhookURL,
+				UserID:      sub.UserID,
 			}
 
 			body, err := json.Marshal(job)

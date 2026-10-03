@@ -298,6 +298,7 @@ func (h *Handler) collectDeliveries(ctx context.Context, cur *models.ScopeState,
 				RoleID:     resolveRoleID(sub.Mention),
 				TargetType: sub.TargetType,
 				WebhookURL: sub.WebhookURL,
+				UserID:     sub.UserID,
 			},
 		}
 	}
@@ -348,11 +349,14 @@ func scopeLabelFor(key string) string {
 	return g
 }
 
-// deliveryKey identifies a delivery target: "bot:<guildId>:<channelId>" or
-// "webhook:<normalizedURL>".
+// deliveryKey identifies a delivery target: "bot:<guildId>:<channelId>",
+// "dm:<userId>", or "webhook:<normalizedURL>".
 func deliveryKey(sub *models.Subscription) string {
 	if sub.TargetType == "webhook" {
 		return "webhook:" + strings.ToLower(strings.TrimSpace(sub.WebhookURL))
+	}
+	if sub.TargetType == "dm" {
+		return "dm:" + sub.UserID
 	}
 	return fmt.Sprintf("bot:%s:%s", sub.GuildID, sub.ChannelID)
 }

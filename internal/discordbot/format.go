@@ -30,19 +30,40 @@ func (h *Handler) subscriptionDisplayLabel(mapping servermap.Mapping, sub models
 	return human
 }
 
+// deliveryTargetName is the short display name for where alerts are sent:
+// "your DMs" for DM subscriptions, or "#channel" for guild channels.
+func (h *Handler) deliveryTargetName(ctx context.Context, sub models.Subscription) string {
+	if sub.TargetType == "dm" {
+		return "your DMs"
+	}
+	return h.channelPretty(ctx, sub.GuildID, sub.ChannelID)
+}
+
+// subscriptionTargetDisplay describes the delivery target in unsubscribe picker
+// text: "DM" for DM subscriptions, otherwise the role display.
+func (h *Handler) subscriptionTargetDisplay(sub models.Subscription) string {
+	if sub.TargetType == "dm" {
+		return "DM"
+	}
+	return h.subscriptionRoleDisplay(sub)
+}
+
 // subscriptionUnsubscribeChoiceText is shown in autocomplete only (no subscription IDs; role as @Name when known).
-func (h *Handler) subscriptionUnsubscribeChoiceText(ctx context.Context, guildID string, mapping servermap.Mapping, sub models.Subscription) string {
+func (h *Handler) subscriptionUnsubscribeChoiceText(ctx context.Context, mapping servermap.Mapping, sub models.Subscription) string {
 	human := subscriptionServerLabel(mapping, sub)
-	role := h.subscriptionRoleDisplay(sub)
-	ch := h.channelPretty(ctx, guildID, sub.ChannelID)
+	if sub.TargetType == targetTypeDM {
+		return fmt.Sprintf("%s · in your DMs", human)
+	}
+	target := h.subscriptionTargetDisplay(sub)
+	ch := h.deliveryTargetName(ctx, sub)
 	if scope.IsWildcard(sub.ServerID) {
-		return fmt.Sprintf("%s · %s · in %s", human, role, ch)
+		return fmt.Sprintf("%s · %s · in %s", human, target, ch)
 	}
 	game, region, server := splitGameServerHuman(human)
 	if region != "" && server != "" {
-		return fmt.Sprintf("%s · %s · %s · %s · in %s", game, region, server, role, ch)
+		return fmt.Sprintf("%s · %s · %s · %s · in %s", game, region, server, target, ch)
 	}
-	return fmt.Sprintf("%s · %s · %s · in %s", game, server, role, ch)
+	return fmt.Sprintf("%s · %s · %s · in %s", game, server, target, ch)
 }
 
 // splitGameServerHuman splits a display label (e.g. "wow-us-illidan") into game, region, and server.

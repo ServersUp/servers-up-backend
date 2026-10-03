@@ -18,10 +18,26 @@ func (h *Handler) handleUnsubscribe(ctx context.Context, interaction discord.Int
 	}
 
 	subscriptionID := strings.TrimSpace(h.getOption(data.Options, "subscription"))
+
+	isDM := isDMInteraction(interaction)
+	userID := ""
+	if isDM {
+		userID = interaction.InvokerUserID()
+		if userID == "" {
+			slog.Warn("dm unsubscribe missing invoker user",
+				"interactionId", interaction.ID,
+				"channelID", interaction.ChannelID,
+			)
+			return h.discordResponse("I couldn't identify your Discord account. Please try again.")
+		}
+	}
+
 	slog.Info("unsubscribe request received",
 		"interactionId", interaction.ID,
 		"guildID", interaction.GuildID,
 		"channelID", interaction.ChannelID,
+		"dm", isDM,
+		"userID", userID,
 		"subscriptionID", subscriptionID,
 	)
 
@@ -29,13 +45,22 @@ func (h *Handler) handleUnsubscribe(ctx context.Context, interaction discord.Int
 		slog.Warn("unsubscribe request missing subscription",
 			"guildID", interaction.GuildID,
 			"channelID", interaction.ChannelID,
+			"dm", isDM,
 		)
+		if isDM {
+			return h.discordResponse("Choose a **subscription** (type to search), matching what `/subscriptions` shows for your DMs.")
+		}
 		return h.discordResponse("Choose a **subscription** (type to search), matching what `/subscriptions` shows for this guild.")
 	}
 
-	subs, err := h.database.ListSubscriptionsByGuild(ctx, interaction.GuildID)
+	storageGuildID := interaction.GuildID
+	if isDM {
+		storageGuildID = dmGuildID(userID)
+	}
+
+	subs, err := h.database.ListSubscriptionsByGuild(ctx, storageGuildID)
 	if err != nil {
-		slog.Error("failed to list subscriptions for unsubscribe", "error", err, "guildID", interaction.GuildID)
+		slog.Error("failed to list subscriptions for unsubscribe", "error", err, "guildID", storageGuildID)
 		return h.discordResponse("Failed to load subscriptions. Please try again later.")
 	}
 
@@ -48,10 +73,14 @@ func (h *Handler) handleUnsubscribe(ctx context.Context, interaction discord.Int
 		}
 	}
 	if match == nil {
-		slog.Warn("unsubscribe subscription id not found in guild",
-			"guildID", interaction.GuildID,
+		slog.Warn("unsubscribe subscription id not found",
+			"guildID", storageGuildID,
+			"dm", isDM,
 			"subscriptionID", subscriptionID,
 		)
+		if isDM {
+			return h.discordResponse("That subscription was not found in your DMs. Run `/subscriptions` and try again.")
+		}
 		return h.discordResponse("That subscription was not found in this guild. Run `/subscriptions` and try again.")
 	}
 
@@ -73,7 +102,7 @@ func (h *Handler) handleUnsubscribe(ctx context.Context, interaction discord.Int
 		"subscriptionID", match.SubscriptionID,
 	)
 
-	if err := h.database.DeleteSubscription(ctx, interaction.GuildID, match.ChannelID, match.ServerID, match.SubscriptionID); err != nil {
+	if err := h.database.DeleteSubscription(ctx, storageGuildID, match.ChannelID, match.ServerID, match.SubscriptionID); err != nil {
 		slog.Error("failed to delete subscription",
 			"error", err,
 			"guildID", interaction.GuildID,
@@ -94,7 +123,7 @@ func (h *Handler) handleUnsubscribe(ctx context.Context, interaction discord.Int
 		}
 	}
 
-	chLabel := h.channelPretty(ctx, interaction.GuildID, match.ChannelID)
+	chLabel := h.deliveryTargetName(ctx, *match)
 	if match.RoleName != "" {
 		slog.Info("unsubscribe completed",
 			"guildID", interaction.GuildID,

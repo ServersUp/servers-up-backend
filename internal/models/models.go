@@ -45,12 +45,16 @@ type Subscription struct {
 	GameID string `json:"game_id,omitempty" dynamodbav:"gameId,omitempty"`
 	// Region is the region for region scopes.
 	Region string `json:"region,omitempty" dynamodbav:"region,omitempty"`
-	// TargetType indicates the delivery mechanism: "bot" (default) or "webhook".
+	// TargetType indicates the delivery mechanism: "bot" (default), "webhook", or "dm".
 	TargetType string `json:"target_type" dynamodbav:"targetType"`
 	// WebhookURL is used when TargetType is "webhook".
 	WebhookURL string `json:"webhook_url,omitempty" dynamodbav:"webhookUrl,omitempty"`
 	// WebhookToken is optional metadata for webhook delivery.
 	WebhookToken string `json:"webhook_token,omitempty" dynamodbav:"webhookToken,omitempty"`
+	// UserID is the Discord user ID to DM when TargetType is "dm".
+	// DM subscriptions store GuildID as "dm#<userID>" so existing guild
+	// indexes and lookups keep working unchanged.
+	UserID string `json:"user_id,omitempty" dynamodbav:"userId,omitempty"`
 }
 
 // GuildNotifyJob is the payload sent to the Discord guild notify SQS queue when
@@ -64,10 +68,12 @@ type GuildNotifyJob struct {
 	// ServerLabel is the human-readable "game-server" label captured at subscribe time.
 	// When non-empty, the notify lambda uses this directly instead of reverse-mapping the technical ID.
 	ServerLabel string `json:"serverLabel,omitempty"`
-	// TargetType indicates the delivery mechanism: "bot" (default) or "webhook".
+	// TargetType indicates the delivery mechanism: "bot" (default), "webhook", or "dm".
 	TargetType string `json:"targetType,omitempty"`
 	// WebhookURL is used when TargetType is "webhook".
 	WebhookURL string `json:"webhookUrl,omitempty"`
+	// UserID is the Discord user ID to DM when TargetType is "dm".
+	UserID string `json:"userId,omitempty"`
 	// Aggregate marks an aggregate scope notification (region wildcard)
 	// rather than a per-server notification.
 	Aggregate bool `json:"aggregate,omitempty"`
