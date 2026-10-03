@@ -28,9 +28,14 @@ import (
 
 var webhookURLPattern = regexp.MustCompile(`^https://discord\.com/api/webhooks/[0-9]+/[A-Za-z0-9_-]+$`)
 
+// discordErrCodeCannotDM is Discord error code 50007: the recipient's privacy
+// settings block DMs from this user (the bot cannot open a DM channel).
+const discordErrCodeCannotDM = 50007
+
 type DiscordClient interface {
 	SendChannelMessage(ctx context.Context, channelID, content, roleID string) error
 	SendWebhookMessage(ctx context.Context, webhookURL, content, roleID string) error
+	SendDMMessage(ctx context.Context, userID, content string) error
 }
 
 type Handler struct {
@@ -142,7 +147,8 @@ func (h *Handler) processRecord(ctx context.Context, rec events.SQSMessage) erro
 		)
 		return nil
 	}
-	if job.TargetType == "webhook" {
+	switch job.TargetType {
+	case "webhook":
 		if job.WebhookURL == "" {
 			slog.Warn("webhook notify job missing webhook url; ack-deleting",
 				"messageId", rec.MessageId,
@@ -151,15 +157,27 @@ func (h *Handler) processRecord(ctx context.Context, rec events.SQSMessage) erro
 			)
 			return nil
 		}
-	} else if job.ChannelID == "" {
-		slog.Warn("guild notify job missing channel; ack-deleting",
-			"messageId", rec.MessageId,
-			"serverID", job.ServerID,
-			"status", job.Status,
-			"channelID", job.ChannelID,
-			"guildID", job.GuildID,
-		)
-		return nil
+	case "dm":
+		if !isNumeric(job.UserID) {
+			slog.Warn("dm notify job missing valid user id; ack-deleting",
+				"messageId", rec.MessageId,
+				"serverID", job.ServerID,
+				"status", job.Status,
+				"userID", job.UserID,
+			)
+			return nil
+		}
+	default:
+		if job.ChannelID == "" {
+			slog.Warn("guild notify job missing channel; ack-deleting",
+				"messageId", rec.MessageId,
+				"serverID", job.ServerID,
+				"status", job.Status,
+				"channelID", job.ChannelID,
+				"guildID", job.GuildID,
+			)
+			return nil
+		}
 	}
 
 	var content string
@@ -176,16 +194,21 @@ func (h *Handler) processRecord(ctx context.Context, rec events.SQSMessage) erro
 	slog.Info("sending discord notification",
 		"serverID", job.ServerID,
 		"status", job.Status,
+		"targetType", job.TargetType,
 		"guildID", job.GuildID,
 		"channelID", job.ChannelID,
+		"userID", job.UserID,
 		"hasRole", job.RoleID != "",
 		"messageId", rec.MessageId,
 	)
 
 	var sendErr error
-	if job.TargetType == "webhook" {
+	switch job.TargetType {
+	case "webhook":
 		sendErr = h.discord.SendWebhookMessage(ctx, job.WebhookURL, content, job.RoleID)
-	} else {
+	case "dm":
+		sendErr = h.discord.SendDMMessage(ctx, job.UserID, content)
+	default:
 		sendErr = h.discord.SendChannelMessage(ctx, job.ChannelID, content, job.RoleID)
 	}
 	if sendErr != nil {
@@ -195,8 +218,10 @@ func (h *Handler) processRecord(ctx context.Context, rec events.SQSMessage) erro
 	slog.Info("sent discord notification",
 		"serverID", job.ServerID,
 		"status", job.Status,
+		"targetType", job.TargetType,
 		"guildID", job.GuildID,
 		"channelID", job.ChannelID,
+		"userID", job.UserID,
 		"messageId", rec.MessageId,
 	)
 
@@ -205,6 +230,30 @@ func (h *Handler) processRecord(ctx context.Context, rec events.SQSMessage) erro
 
 func (h *Handler) handleDiscordSendError(job models.GuildNotifyJob, messageID string, err error) error {
 	if apiErr, ok := discord.AsAPIError(err); ok {
+		if job.TargetType == "dm" {
+			if apiErr.StatusCode == http.StatusForbidden && apiErr.ErrorCode() == discordErrCodeCannotDM {
+				slog.Warn("dm not allowed by user; ack-deleting",
+					"serverID", job.ServerID,
+					"status", job.Status,
+					"discordStatus", apiErr.StatusCode,
+					"discordErrorCode", apiErr.ErrorCode(),
+					"userID", job.UserID,
+					"messageId", messageID,
+				)
+				return nil
+			}
+			if apiErr.StatusCode == http.StatusNotFound {
+				slog.Warn("dm target not found; ack-deleting",
+					"serverID", job.ServerID,
+					"status", job.Status,
+					"discordStatus", apiErr.StatusCode,
+					"discordErrorCode", apiErr.ErrorCode(),
+					"userID", job.UserID,
+					"messageId", messageID,
+				)
+				return nil
+			}
+		}
 		if apiErr.Permanent() {
 			slog.Warn("permanent discord send failure; ack-deleting",
 				"error", err,
@@ -213,6 +262,7 @@ func (h *Handler) handleDiscordSendError(job models.GuildNotifyJob, messageID st
 				"status", job.Status,
 				"guildID", job.GuildID,
 				"channelID", job.ChannelID,
+				"userID", job.UserID,
 				"messageId", messageID,
 			)
 			return nil
@@ -224,6 +274,7 @@ func (h *Handler) handleDiscordSendError(job models.GuildNotifyJob, messageID st
 				"serverID", job.ServerID,
 				"guildID", job.GuildID,
 				"channelID", job.ChannelID,
+				"userID", job.UserID,
 				"messageId", messageID,
 			)
 			return nil
@@ -235,6 +286,7 @@ func (h *Handler) handleDiscordSendError(job models.GuildNotifyJob, messageID st
 				"serverID", job.ServerID,
 				"guildID", job.GuildID,
 				"channelID", job.ChannelID,
+				"userID", job.UserID,
 				"messageId", messageID,
 			)
 			return fmt.Errorf("send discord message: %w", err)
@@ -246,6 +298,7 @@ func (h *Handler) handleDiscordSendError(job models.GuildNotifyJob, messageID st
 		"serverID", job.ServerID,
 		"guildID", job.GuildID,
 		"channelID", job.ChannelID,
+		"userID", job.UserID,
 		"messageId", messageID,
 	)
 	return fmt.Errorf("send discord message: %w", err)
@@ -256,6 +309,19 @@ func bodySnippet(body string, maxLen int) string {
 		return body
 	}
 	return body[:maxLen] + "…"
+}
+
+// isNumeric reports whether s is non-empty and all ASCII digits (Discord snowflake IDs).
+func isNumeric(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func formatDiscordContent(job models.GuildNotifyJob, serverLabel string) string {
@@ -372,7 +438,7 @@ func (c *discordHTTPClient) SendWebhookMessage(ctx context.Context, webhookURL, 
 	}
 
 	body, _ := io.ReadAll(io.LimitReader(res.Body, 8*1024))
-	return &discord.APIError{StatusCode: res.StatusCode, Body: string(body)}
+	return discord.NewAPIError(res.StatusCode, string(body))
 }
 
 func (c *discordHTTPClient) SendChannelMessage(ctx context.Context, channelID, content, roleID string) error {
@@ -411,7 +477,56 @@ func (c *discordHTTPClient) SendChannelMessage(ctx context.Context, channelID, c
 	}
 
 	body, _ := io.ReadAll(io.LimitReader(res.Body, 8*1024))
-	return &discord.APIError{StatusCode: res.StatusCode, Body: string(body)}
+	return discord.NewAPIError(res.StatusCode, string(body))
+}
+
+// SendDMMessage delivers content to a user's DM channel. It opens (or reuses)
+// the bot's DM channel with the user via POST /users/@me/channels, then sends
+// the message to that channel using the same path as guild channel messages.
+func (c *discordHTTPClient) SendDMMessage(ctx context.Context, userID, content string) error {
+	channelID, err := c.createDMChannel(ctx, userID)
+	if err != nil {
+		return err
+	}
+	return c.SendChannelMessage(ctx, channelID, content, "")
+}
+
+func (c *discordHTTPClient) createDMChannel(ctx context.Context, userID string) (string, error) {
+	reqBody := map[string]string{"recipient_id": userID}
+	b, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", fmt.Errorf("marshal create dm channel request: %w", err)
+	}
+
+	url := c.baseURL + "/users/@me/channels"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(b))
+	if err != nil {
+		return "", fmt.Errorf("create dm channel request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bot "+c.botToken)
+	req.Header.Set("Content-Type", "application/json")
+
+	res, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("discord create dm channel request failed: %w", err)
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode >= 200 && res.StatusCode < 300 {
+		var channel struct {
+			ID string `json:"id"`
+		}
+		if err := json.NewDecoder(io.LimitReader(res.Body, 8*1024)).Decode(&channel); err != nil {
+			return "", fmt.Errorf("decode create dm channel response: %w", err)
+		}
+		if channel.ID == "" {
+			return "", fmt.Errorf("discord create dm channel response missing channel id")
+		}
+		return channel.ID, nil
+	}
+
+	body, _ := io.ReadAll(io.LimitReader(res.Body, 8*1024))
+	return "", discord.NewAPIError(res.StatusCode, string(body))
 }
 
 func main() {

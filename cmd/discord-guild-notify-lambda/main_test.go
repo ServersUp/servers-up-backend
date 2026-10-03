@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -19,6 +20,7 @@ import (
 
 type mockDiscord struct {
 	sendFunc func(ctx context.Context, channelID, content, roleID string) error
+	dmFunc   func(ctx context.Context, userID, content string) error
 	calls    []discordCall
 }
 
@@ -30,8 +32,17 @@ func (m *mockDiscord) SendWebhookMessage(ctx context.Context, webhookURL, conten
 	return nil
 }
 
+func (m *mockDiscord) SendDMMessage(ctx context.Context, userID, content string) error {
+	m.calls = append(m.calls, discordCall{userID: userID, content: content})
+	if m.dmFunc != nil {
+		return m.dmFunc(ctx, userID, content)
+	}
+	return nil
+}
+
 type discordCall struct {
 	channelID  string
+	userID     string
 	content    string
 	roleID     string
 	webhookURL string
@@ -592,6 +603,240 @@ func TestHandleDiscordSendError_classification(t *testing.T) {
 	)
 	if err == nil {
 		t.Fatal("429 should retry")
+	}
+}
+
+// dmFlow simulates the two-step Discord DM delivery: POST /users/@me/channels
+// (open DM channel) then POST /channels/<id>/messages (send the message).
+type dmFlow struct {
+	createStatus int
+	createBody   string
+	sendStatus   int
+	sendBody     string
+
+	createCalled bool
+	sendCalled   bool
+	sentTo       string
+}
+
+func (f *dmFlow) handler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/users/@me/channels" {
+			f.createCalled = true
+			w.WriteHeader(f.createStatus)
+			_, _ = w.Write([]byte(f.createBody))
+			return
+		}
+		f.sendCalled = true
+		f.sentTo = strings.TrimPrefix(strings.TrimSuffix(r.URL.Path, "/messages"), "/channels/")
+		w.WriteHeader(f.sendStatus)
+		_, _ = w.Write([]byte(f.sendBody))
+	}
+}
+
+func dmHandlerFor(t *testing.T, f *dmFlow) *Handler {
+	t.Helper()
+	srv := httptest.NewServer(f.handler())
+	t.Cleanup(srv.Close)
+	client := &discordHTTPClient{httpClient: srv.Client(), baseURL: srv.URL, botToken: "test"}
+	return &Handler{discord: client, mappingCache: servermap.NewCachedMapping(time.Hour)}
+}
+
+func TestHandleRequest_dm_success(t *testing.T) {
+	t.Parallel()
+
+	f := &dmFlow{
+		createStatus: http.StatusOK,
+		createBody:   `{"id":"dmchan-1"}`,
+		sendStatus:   http.StatusOK,
+	}
+	h := dmHandlerFor(t, f)
+
+	resp, err := h.HandleRequest(context.Background(), events.SQSEvent{Records: []events.SQSMessage{
+		{MessageId: "m1", Body: `{"serverId":"battlenet#us#11","status":"DOWN","targetType":"dm","userId":"1234567890"}`},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.BatchItemFailures) != 0 {
+		t.Fatalf("expected no failures, got %+v", resp.BatchItemFailures)
+	}
+	if !f.createCalled || !f.sendCalled {
+		t.Fatalf("expected create+send, got create=%v send=%v", f.createCalled, f.sendCalled)
+	}
+	if f.sentTo != "dmchan-1" {
+		t.Fatalf("expected message sent to dmchan-1, got %q", f.sentTo)
+	}
+}
+
+func TestHandleRequest_dm_blocked50007_ackDeletes(t *testing.T) {
+	t.Parallel()
+
+	f := &dmFlow{
+		createStatus: http.StatusForbidden,
+		createBody:   `{"code":50007,"message":"Cannot send messages to this user"}`,
+	}
+	h := dmHandlerFor(t, f)
+
+	resp, err := h.HandleRequest(context.Background(), events.SQSEvent{Records: []events.SQSMessage{
+		{MessageId: "m1", Body: `{"serverId":"x","status":"UP","targetType":"dm","userId":"1234567890"}`},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.BatchItemFailures) != 0 {
+		t.Fatalf("expected ack-delete (no retry) for 50007, got %+v", resp.BatchItemFailures)
+	}
+	if f.sendCalled {
+		t.Fatal("should not attempt to send when DM channel creation is blocked")
+	}
+}
+
+func TestHandleRequest_dm_404_ackDeletes(t *testing.T) {
+	t.Parallel()
+
+	f := &dmFlow{
+		createStatus: http.StatusNotFound,
+		createBody:   `{"code":10014,"message":"Unknown User"}`,
+	}
+	h := dmHandlerFor(t, f)
+
+	resp, err := h.HandleRequest(context.Background(), events.SQSEvent{Records: []events.SQSMessage{
+		{MessageId: "m1", Body: `{"serverId":"x","status":"UP","targetType":"dm","userId":"1234567890"}`},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.BatchItemFailures) != 0 {
+		t.Fatalf("expected ack-delete for 404, got %+v", resp.BatchItemFailures)
+	}
+}
+
+func TestHandleRequest_dm_429_retries(t *testing.T) {
+	t.Parallel()
+
+	f := &dmFlow{
+		createStatus: http.StatusTooManyRequests,
+		createBody:   `{"code":0,"message":"You are being rate limited."}`,
+	}
+	h := dmHandlerFor(t, f)
+
+	resp, err := h.HandleRequest(context.Background(), events.SQSEvent{Records: []events.SQSMessage{
+		{MessageId: "m1", Body: `{"serverId":"x","status":"UP","targetType":"dm","userId":"1234567890"}`},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.BatchItemFailures) != 1 || resp.BatchItemFailures[0].ItemIdentifier != "m1" {
+		t.Fatalf("expected m1 to be retried for 429, got %+v", resp.BatchItemFailures)
+	}
+}
+
+func TestHandleRequest_dm_5xx_retries(t *testing.T) {
+	t.Parallel()
+
+	f := &dmFlow{
+		createStatus: http.StatusBadGateway,
+		createBody:   `oops`,
+	}
+	h := dmHandlerFor(t, f)
+
+	resp, err := h.HandleRequest(context.Background(), events.SQSEvent{Records: []events.SQSMessage{
+		{MessageId: "m1", Body: `{"serverId":"x","status":"UP","targetType":"dm","userId":"1234567890"}`},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.BatchItemFailures) != 1 || resp.BatchItemFailures[0].ItemIdentifier != "m1" {
+		t.Fatalf("expected m1 to be retried for 502, got %+v", resp.BatchItemFailures)
+	}
+}
+
+func TestHandleRequest_dm_missingUserID_ackDeletes(t *testing.T) {
+	t.Parallel()
+
+	md := &mockDiscord{}
+	h := newTestHandler(md, servermap.Mapping{})
+
+	ev := events.SQSEvent{Records: []events.SQSMessage{
+		{MessageId: "empty", Body: `{"serverId":"x","status":"UP","targetType":"dm","userId":""}`},
+		{MessageId: "nonnum", Body: `{"serverId":"x","status":"UP","targetType":"dm","userId":"abc"}`},
+	}}
+
+	resp, err := h.HandleRequest(context.Background(), ev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.BatchItemFailures) != 0 {
+		t.Fatalf("expected ack-delete, got %+v", resp.BatchItemFailures)
+	}
+	if len(md.calls) != 0 {
+		t.Fatalf("expected no discord calls, got %d", len(md.calls))
+	}
+}
+
+func TestHandleRequest_dm_contentUsesExistingFormatting(t *testing.T) {
+	t.Parallel()
+
+	md := &mockDiscord{}
+	h := newTestHandler(md, servermap.Mapping{})
+
+	resp, err := h.HandleRequest(context.Background(), events.SQSEvent{Records: []events.SQSMessage{
+		{MessageId: "m1", Body: `{"serverId":"battlenet#us#11","status":"DOWN","targetType":"dm","userId":"1234567890","serverLabel":"wow-illidan"}`},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.BatchItemFailures) != 0 {
+		t.Fatalf("expected no failures, got %+v", resp.BatchItemFailures)
+	}
+	if len(md.calls) != 1 {
+		t.Fatalf("expected 1 dm call, got %d", len(md.calls))
+	}
+	if md.calls[0].userID != "1234567890" {
+		t.Fatalf("expected userID passed to client, got %q", md.calls[0].userID)
+	}
+	if !strings.Contains(md.calls[0].content, "wow-illidan") || !strings.Contains(md.calls[0].content, "**DOWN**") {
+		t.Fatalf("expected same content formatting, got %q", md.calls[0].content)
+	}
+}
+
+func TestDiscordHTTPClient_SendDMMessage_success(t *testing.T) {
+	t.Parallel()
+
+	var sentTo, auth, recipient string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth = r.Header.Get("Authorization")
+		switch r.URL.Path {
+		case "/users/@me/channels":
+			var body struct {
+				RecipientID string `json:"recipient_id"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			recipient = body.RecipientID
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"id":"dmchan-9"}`))
+		case "/channels/dmchan-9/messages":
+			sentTo = r.URL.Path
+			w.WriteHeader(http.StatusOK)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	client := &discordHTTPClient{httpClient: srv.Client(), baseURL: srv.URL, botToken: "tok-123"}
+	if err := client.SendDMMessage(context.Background(), "1234567890", "hello"); err != nil {
+		t.Fatalf("expected success, got %v", err)
+	}
+	if auth != "Bot tok-123" {
+		t.Fatalf("expected bot auth header, got %q", auth)
+	}
+	if sentTo != "/channels/dmchan-9/messages" {
+		t.Fatalf("expected message to dmchan-9, got %q", sentTo)
+	}
+	if recipient != "1234567890" {
+		t.Fatalf("expected recipient_id 1234567890, got %q", recipient)
 	}
 }
 

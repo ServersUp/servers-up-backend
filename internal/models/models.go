@@ -64,10 +64,12 @@ type GuildNotifyJob struct {
 	// ServerLabel is the human-readable "game-server" label captured at subscribe time.
 	// When non-empty, the notify lambda uses this directly instead of reverse-mapping the technical ID.
 	ServerLabel string `json:"serverLabel,omitempty"`
-	// TargetType indicates the delivery mechanism: "bot" (default) or "webhook".
+	// TargetType indicates the delivery mechanism: "bot" (default), "webhook", or "dm".
 	TargetType string `json:"targetType,omitempty"`
 	// WebhookURL is used when TargetType is "webhook".
 	WebhookURL string `json:"webhookUrl,omitempty"`
+	// UserID is the Discord user ID to DM when TargetType is "dm".
+	UserID string `json:"userId,omitempty"`
 	// Aggregate marks an aggregate scope notification (region wildcard)
 	// rather than a per-server notification.
 	Aggregate bool `json:"aggregate,omitempty"`
