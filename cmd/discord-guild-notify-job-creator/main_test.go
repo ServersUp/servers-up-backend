@@ -162,6 +162,32 @@ func TestProcessRecord_DOWN_to_UP(t *testing.T) {
 	}
 }
 
+func TestProcessRecord_dmSubscriptionCarriesUserID(t *testing.T) {
+	t.Parallel()
+	ml := &mockLister{
+		subs: []models.Subscription{
+			{ServerID: "battlenet#us#11", GuildID: "dm#123", ChannelID: "dmch", TargetType: "dm", UserID: "123"},
+		},
+	}
+	ms := &mockSQS{}
+	h := &Handler{list: ml, sqs: ms, queueURL: "https://sqs.example/queue"}
+
+	rec := statusChangeRecord("UP", "DOWN")
+	if err := h.processRecord(context.Background(), &rec); err != nil {
+		t.Fatal(err)
+	}
+	if len(ms.bodies) != 1 {
+		t.Fatalf("expected 1 sqs message, got %d", len(ms.bodies))
+	}
+	var job models.GuildNotifyJob
+	if err := json.Unmarshal([]byte(ms.bodies[0]), &job); err != nil {
+		t.Fatal(err)
+	}
+	if job.TargetType != "dm" || job.UserID != "123" || job.GuildID != "dm#123" || job.Status != "DOWN" {
+		t.Fatalf("unexpected dm job: %+v", job)
+	}
+}
+
 func TestProcessRecord_noSubscriptions(t *testing.T) {
 	t.Parallel()
 	ml := &mockLister{subs: nil}

@@ -246,6 +246,71 @@ func TestProcessScope_terminalSettleElapsedClaimsAndCollects(t *testing.T) {
 	}
 }
 
+func TestProcessScope_dmSubscriptionCollectsDeliveryWithUserID(t *testing.T) {
+	fs := &fakeScopeStore{claimOK: true}
+	subs := &fakeSubLister{byServer: map[string][]models.Subscription{
+		scope.Key("wow", "us"): {
+			{GuildID: "dm#123", ChannelID: "dmch", TargetType: "dm", UserID: "123"},
+		},
+	}}
+	h := testHandler(fs, subs, &fakeStatusLister{}, &fakeSender{}, 5*time.Minute)
+	cur := models.ScopeState{
+		ScopeKey:   scope.Key("wow", "us"),
+		TotalCount: 3,
+		UpCount:    0,
+		State:      scope.StateAllDown,
+		StateSince: 100 - 400,
+	}
+	pending := map[string]*delivery{}
+
+	if err := h.processScope(context.Background(), testMapping(), testStatuses(), &cur, 100, pending); err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 1 {
+		t.Fatalf("expected 1 pending delivery, got %d", len(pending))
+	}
+	var d *delivery
+	for _, v := range pending {
+		d = v
+	}
+	if !d.job.Aggregate || d.job.Status != "DOWN" || d.job.TargetType != "dm" || d.job.UserID != "123" || d.job.RoleID != "" {
+		t.Fatalf("unexpected dm aggregate job: %+v", d.job)
+	}
+}
+
+func TestHandleRequest_dmSubscriptionsDedupePerUser(t *testing.T) {
+	now := time.Now().Unix()
+	regionKey := scope.Key("wow", "us")
+	fs := &fakeScopeStore{claimOK: true, states: map[string]models.ScopeState{
+		regionKey: {
+			ScopeKey:   regionKey,
+			TotalCount: 3,
+			UpCount:    0,
+			State:      scope.StateAllDown,
+			StateSince: now - 400,
+		},
+	}}
+	// same user subscribed twice to the same region scope via DM
+	subs := &fakeSubLister{byServer: map[string][]models.Subscription{
+		regionKey: {
+			{GuildID: "dm#123", ChannelID: "dmch-a", TargetType: "dm", UserID: "123"},
+			{GuildID: "dm#123", ChannelID: "dmch-b", TargetType: "dm", UserID: "123"},
+		},
+	}}
+	sender := &fakeSender{}
+	h := testHandler(fs, subs, &fakeStatusLister{byGame: statusRowsByGame(testStatuses())}, sender, 5*time.Minute)
+
+	if err := h.HandleRequest(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(sender.sent) != 1 {
+		t.Fatalf("expected 1 deduped SQS job, got %d", len(sender.sent))
+	}
+	if sender.sent[0].TargetType != "dm" || sender.sent[0].UserID != "123" {
+		t.Fatalf("unexpected dm job: %+v", sender.sent[0])
+	}
+}
+
 func TestProcessScope_alreadyNotifiedSkips(t *testing.T) {
 	fs := &fakeScopeStore{claimOK: true}
 	h := testHandler(fs, &fakeSubLister{}, &fakeStatusLister{}, &fakeSender{}, 5*time.Minute)
@@ -392,5 +457,8 @@ func TestDeliveryKey(t *testing.T) {
 	}
 	if got := deliveryKey(&models.Subscription{TargetType: "webhook", WebhookURL: "HTTPS://X"}); got != "webhook:https://x" {
 		t.Fatalf("webhook key = %q", got)
+	}
+	if got := deliveryKey(&models.Subscription{TargetType: "dm", GuildID: "dm#123", ChannelID: "dmch", UserID: "123"}); got != "dm:123" {
+		t.Fatalf("dm key = %q", got)
 	}
 }
