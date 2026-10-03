@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# tools/verify [BASE_REF]
+# One-command deterministic checks, mirroring CI (.github/workflows/pr_test.yaml) plus gofmt and build.
+# Compact report: one line per check, first lines of any failure, exit 1 if anything fails.
+#   gofmt  - Go files changed vs BASE_REF (default origin/main), including uncommitted and untracked files
+#   vet    - go vet ./...
+#   build  - go build ./...
+#   test   - go test ./...
+#   race   - go test -race ./...
+# Works offline when the module cache is warm. No arguments are needed for normal use.
+set -uo pipefail
+BASE="${1:-origin/main}"
+cd "$(git rev-parse --show-toplevel)" || exit 2
+export GOFLAGS="${GOFLAGS:--buildvcs=false}"   # worktrees and sandboxes: skip VCS stamping
+fail=0; start=$(date +%s)
+pass() { printf '%-7s PASS%s\n' "$1" "${2:+  ($2)}"; }
+bad()  { printf '%-7s FAIL%s\n' "$1" "${2:+  ($2)}"; fail=1; }
+head8() { sed -n '1,8p' | cut -c1-160 | sed 's/^/          /'; }
+
+changed=$( { git diff --name-only --diff-filter=ACMR "$BASE" -- '*.go'; git ls-files --others --exclude-standard -- '*.go'; } 2>/dev/null | sort -u )
+echo "verify: $(git rev-parse --short HEAD) vs $BASE | $(printf '%s\n' $changed | grep -c .) Go file(s) changed"
+
+if [ -n "$changed" ]; then
+  out=$(gofmt -l $changed 2>&1)
+  [ -z "$out" ] && pass gofmt "changed files" || { bad gofmt "unformatted"; echo "$out" | head8; }
+else pass gofmt "no Go files changed"; fi
+
+out=$(go vet ./... 2>&1);   [ $? -eq 0 ] && pass vet   || { bad vet;   echo "$out" | head8; }
+out=$(go build ./... 2>&1); [ $? -eq 0 ] && pass build || { bad build; echo "$out" | head8; }
+
+out=$(go test -count=1 ./... 2>&1); rc=$?
+if [ $rc -eq 0 ]; then pass test "$(echo "$out" | grep -c '^ok') packages"
+else bad test; echo "$out" | grep -E '^(FAIL|--- FAIL|panic)|_test\.go:[0-9]+' | head8; fi
+
+out=$(go test -race -count=1 ./... 2>&1); rc=$?
+if [ $rc -eq 0 ]; then pass race "$(echo "$out" | grep -c '^ok') packages"
+else bad race; echo "$out" | grep -E 'DATA RACE|^FAIL|--- FAIL' | head8; fi
+
+echo "result: $([ $fail -eq 0 ] && echo ALL CHECKS PASS || echo CHECKS FAILED) in $(( $(date +%s) - start ))s"
+exit $fail
