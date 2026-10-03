@@ -57,11 +57,15 @@
   },
   {
     "name": "games",
-    "description": "List supported games"
+    "description": "List supported games",
+    "contexts": [0, 1, 2],
+    "integration_types": [0, 1]
   },
   {
     "name": "regions",
     "description": "List regions available for a game",
+    "contexts": [0, 1, 2],
+    "integration_types": [0, 1],
     "options": [
       {
         "type": 3,
@@ -75,6 +79,8 @@
   {
     "name": "servers",
     "description": "List servers for a game in a region",
+    "contexts": [0, 1, 2],
+    "integration_types": [0, 1],
     "options": [
       {
         "type": 3,
@@ -95,6 +101,8 @@
   {
     "name": "status",
     "description": "Show current UP/DOWN status for a server",
+    "contexts": [0, 1, 2],
+    "integration_types": [0, 1],
     "options": [
       {
         "type": 3,
@@ -121,6 +129,8 @@
   },
   {
     "name": "help",
-    "description": "Show help"
+    "description": "Show help",
+    "contexts": [0, 1, 2],
+    "integration_types": [0, 1]
   }
 ]
