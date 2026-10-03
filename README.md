@@ -15,13 +15,13 @@ ServersUp Backend monitors game server availability (World of Warcraft via Battl
 ServersUp has three main product paths: **commands** (Discord → bot), **notifications** (status change → Discord channels), and the **public status snapshot/site** (status change → JSON snapshot → website).
 
 **Commands**  
-Users run slash commands in Discord. Discord calls the bot API through a **Lambda Function URL**. The bot reads and writes **subscriptions** and **current status** in DynamoDB, using a shared **server catalog** in S3 so friendly names line up with the same server IDs the pollers use.
+Users run slash commands in Discord—in a guild channel or by DMing the bot. Discord calls the bot API through a **Lambda Function URL**. The bot reads and writes **subscriptions** and **current status** in DynamoDB, using a shared **server catalog** in S3 so friendly names line up with the same server IDs the pollers use.
 
 **Status polling**  
 On a schedule (EventBridge), one or more **poller** Lambdas check whether game servers are up or down. Each poller is built for a particular way of getting status—REST API, JSON feed, HTML scrape, or similar—without tying the overall design to one game or vendor. Today that includes four Battle.net regional Lambdas (US/EU/KR/TW) and FFXIV world polling (Frontier JSON with a Lodestone HTML fallback when Frontier cannot be fetched or parsed). Results are stored in a shared **status** table in DynamoDB. Only rows that actually change are interesting downstream; unchanged polls do not spam the notification path.
 
 **Notifications**  
-When a status row changes, **DynamoDB Streams** emits an event. A **job-creator** Lambda handles that stream, reads matching subscriptions from `DiscordBotSubscriptions`, and enqueues one small job per subscription on **SQS**. Each job carries the subscription's `ServerLabel`; **notifier** Lambdas consume those jobs in batches and post to the right channel (and optional role mention) without looking up subscriptions again.
+When a status row changes, **DynamoDB Streams** emits an event. A **job-creator** Lambda handles that stream, reads matching subscriptions from `DiscordBotSubscriptions`, and enqueues one small job per subscription on **SQS**. Each job carries the subscription's `ServerLabel`; **notifier** Lambdas consume those jobs in batches and post to the right channel (and optional role mention)—or directly to a user's DMs when the subscription was created in a DM—without looking up subscriptions again.
 
 The queue is there because load is **not evenly spread across servers**—popular regions concentrate many subscribers on the same status flip. The stream burst is turned into many queue messages; SQS drives **multiple notifier Lambdas in parallel** and smooths work through batching, instead of one hot server update fanning out in a single invocation.
 
@@ -120,7 +120,7 @@ A Lambda Function URL-backed API that processes Discord interactions. Command lo
 *   **Security**: Mandatory Ed25519 signature verification plus a maximum age on `X-Signature-Timestamp` to reject replayed requests.
 
 ### 3. Discord guild notify pipeline
-When status changes in DynamoDB, a stream-triggered job creator reads matching rows from `DiscordBotSubscriptions` and enqueues per-subscription work to SQS, including the stored `ServerLabel`; a notifier Lambda posts to subscribed Discord channels (optional role mention) without repeating the subscription lookup. See **How it works** above for the end-to-end story and how the main queue and dead-letter queue behave.
+When status changes in DynamoDB, a stream-triggered job creator reads matching rows from `DiscordBotSubscriptions` and enqueues per-subscription work to SQS, including the stored `ServerLabel`; a notifier Lambda posts to subscribed Discord channels (optional role mention) or to a user's DMs for DM subscriptions, without repeating the subscription lookup. See **How it works** above for the end-to-end story and how the main queue and dead-letter queue behave.
 
 - **Queues**: primary `discord-guild-notify-jobs`; dead-letter `discord-guild-notify-jobs-dlq`.
 - **Reliability**: transient send failures retry on the primary queue; clearly permanent failures are dropped; repeatedly failing jobs land in the dead-letter queue for operator review and redrive.
