@@ -28,6 +28,9 @@ func (h *Handler) handleHelp() (events.LambdaFunctionURLResponse, error) {
 		"- Game, region, and server names are case-insensitive. Spaces/underscores are treated like hyphens (e.g. `Area 52` → `area-52`).",
 		"- `/status` is rate-limited per user (and per guild) to keep lookups fast for everyone.",
 		"- Run `/subscriptions` to see what’s configured; `/unsubscribe` uses the same entries (including region and channel).",
+		"",
+		"**Direct messages**",
+		"- You can DM the bot directly: `/subscribe`, `/subscriptions`, and `/unsubscribe` work in DMs and deliver status alerts to your DMs (up to 25 DM subscriptions).",
 	}, "\n")
 	return h.discordResponse(msg)
 }

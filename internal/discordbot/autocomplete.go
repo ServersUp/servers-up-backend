@@ -85,9 +85,16 @@ func (h *Handler) handleAutocomplete(ctx context.Context, interaction discord.In
 			slog.Error("autocomplete: failed to load server mapping", "error", err)
 			return h.autocompleteResponse(nil)
 		}
-		subs, err := h.database.ListSubscriptionsByGuild(ctx, interaction.GuildID)
+		storageGuildID := interaction.GuildID
+		if isDM := isDMInteraction(interaction); isDM {
+			userID := interaction.InvokerUserID()
+			if userID != "" {
+				storageGuildID = dmGuildID(userID)
+			}
+		}
+		subs, err := h.database.ListSubscriptionsByGuild(ctx, storageGuildID)
 		if err != nil {
-			slog.Error("autocomplete: failed to list subscriptions", "error", err)
+			slog.Error("autocomplete: failed to list subscriptions", "error", err, "guildID", storageGuildID)
 			return h.autocompleteResponse(nil)
 		}
 		sort.Slice(subs, func(i, j int) bool {
@@ -100,18 +107,18 @@ func (h *Handler) handleAutocomplete(ctx context.Context, interaction discord.In
 			return subs[i].Mention < subs[j].Mention
 		})
 		partial := optionStringValue(focused)
-		choices := h.subscriptionChoicesForQuery(ctx, interaction.GuildID, mapping, subs, partial, maxChoices)
+		choices := h.subscriptionChoicesForQuery(ctx, mapping, subs, partial, maxChoices)
 		return h.autocompleteResponse(choices)
 	default:
 		return h.autocompleteResponse(nil)
 	}
 }
 
-func (h *Handler) subscriptionChoicesForQuery(ctx context.Context, guildID string, mapping servermap.Mapping, subs []models.Subscription, partial string, max int) []discord.ApplicationCommandOptionChoice {
+func (h *Handler) subscriptionChoicesForQuery(ctx context.Context, mapping servermap.Mapping, subs []models.Subscription, partial string, max int) []discord.ApplicationCommandOptionChoice {
 	q := strings.ToLower(strings.TrimSpace(partial))
 	out := make([]discord.ApplicationCommandOptionChoice, 0, max)
 	for _, sub := range subs {
-		label := h.subscriptionUnsubscribeChoiceText(ctx, guildID, mapping, sub)
+		label := h.subscriptionUnsubscribeChoiceText(ctx, mapping, sub)
 		if q != "" && !strings.Contains(strings.ToLower(label), q) {
 			continue
 		}

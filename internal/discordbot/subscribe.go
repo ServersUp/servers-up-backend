@@ -32,10 +32,27 @@ func (h *Handler) handleSubscribe(ctx context.Context, interaction discord.Inter
 	regionName := servermap.NormalizeKey(rawRegion)
 	serverName := servermap.NormalizeKey(rawServer)
 
+	isDM := isDMInteraction(interaction)
+	userID := ""
+	if isDM {
+		userID = interaction.InvokerUserID()
+		if userID == "" {
+			slog.Warn("dm subscribe missing invoker user",
+				"interactionId", interaction.ID,
+				"channelID", interaction.ChannelID,
+			)
+			return h.discordResponse("I couldn't identify your Discord account. Please try again.")
+		}
+		// Roles don't apply outside guilds; ignore the option in DMs.
+		roleID = ""
+	}
+
 	slog.Info("subscribe request received",
 		"interactionId", interaction.ID,
 		"guildID", interaction.GuildID,
 		"channelID", interaction.ChannelID,
+		"dm", isDM,
+		"userID", userID,
 		"roleID", roleID,
 		"rawGame", rawGame,
 		"rawRegion", rawRegion,
@@ -80,14 +97,31 @@ func (h *Handler) handleSubscribe(ctx context.Context, interaction discord.Inter
 		}
 	}
 
-	existing, err := h.database.ListSubscriptionsByGuild(ctx, interaction.GuildID)
+	storageGuildID := interaction.GuildID
+	if isDM {
+		storageGuildID = dmGuildID(userID)
+	}
+
+	existing, err := h.database.ListSubscriptionsByGuild(ctx, storageGuildID)
 	if err != nil {
-		slog.Error("failed to list subscriptions for duplicate check", "error", err, "guildID", interaction.GuildID)
+		slog.Error("failed to list subscriptions for duplicate check", "error", err, "guildID", storageGuildID)
 		return h.discordResponse("Failed to verify subscription. Please try again later.")
 	}
-	for _, e := range existing {
-		if e.ChannelID == interaction.ChannelID && e.ServerID == target.pk {
-			return h.discordResponse(h.alreadySubscribedMessage(ctx, interaction.GuildID, interaction.ChannelID, target.label, e.RoleName, e.Mention))
+	if isDM {
+		// DM channel IDs can change, so duplicates are keyed by server only.
+		for _, e := range existing {
+			if e.ServerID == target.pk {
+				return h.discordResponse(fmt.Sprintf("You already receive **%s** updates in your DMs. Use `/unsubscribe` to manage them.", target.label))
+			}
+		}
+		if len(existing) >= maxDMSubscriptions {
+			return h.discordResponse(fmt.Sprintf("You already have the maximum of %d DM subscriptions. Use `/unsubscribe` first.", maxDMSubscriptions))
+		}
+	} else {
+		for _, e := range existing {
+			if e.ChannelID == interaction.ChannelID && e.ServerID == target.pk {
+				return h.discordResponse(h.alreadySubscribedMessage(ctx, interaction.GuildID, interaction.ChannelID, target.label, e.RoleName, e.Mention))
+			}
 		}
 	}
 
@@ -103,7 +137,7 @@ func (h *Handler) handleSubscribe(ctx context.Context, interaction discord.Inter
 	sub := models.Subscription{
 		ServerID:       target.pk,
 		SubscriptionID: uuid.New().String(),
-		GuildID:        interaction.GuildID,
+		GuildID:        storageGuildID,
 		ChannelID:      interaction.ChannelID,
 		Mention:        mention,
 		RoleName:       roleName,
@@ -111,6 +145,10 @@ func (h *Handler) handleSubscribe(ctx context.Context, interaction discord.Inter
 		Scope:          target.scopeType,
 		GameID:         target.gameID,
 		Region:         target.region,
+	}
+	if isDM {
+		sub.TargetType = targetTypeDM
+		sub.UserID = userID
 	}
 
 	if err := h.database.AddSubscription(ctx, sub); err != nil {
@@ -141,7 +179,19 @@ func (h *Handler) handleSubscribe(ctx context.Context, interaction discord.Inter
 		"scope", target.scopeType,
 	)
 
-	metrics.EmitCount(metrics.Namespace, "SubscriptionWrite", map[string]string{"command": "subscribe", "scope": target.scopeType}, 1)
+	targetKind := "bot"
+	if isDM {
+		targetKind = targetTypeDM
+	}
+	metrics.EmitCount(metrics.Namespace, "SubscriptionWrite", map[string]string{"command": "subscribe", "scope": target.scopeType, "target": targetKind}, 1)
+
+	if isDM {
+		aggNote := ""
+		if target.scopeType != "" {
+			aggNote = " You'll be notified once when they all go down and once when they all come back up."
+		}
+		return h.discordResponse(fmt.Sprintf("Subscribed you to **%s** status updates in your DMs.%s", target.label, aggNote))
+	}
 
 	return h.subscribeSuccess(ctx, interaction.GuildID, interaction.ChannelID, target.label, target.scopeType, roleName, mention)
 }
@@ -180,10 +230,10 @@ func (h *Handler) resolveSubscribeTarget(mapping servermap.Mapping, gameName, re
 		}
 		technicalID := serverid.Generate(game.Provider, regionKey, server.Identifier)
 		return subscribeTarget{
-			pk:        technicalID,
-			label:     servermap.DisplayLabel(gameID, regionKey, serverKey),
-			gameID:    gameID,
-			region:    regionKey,
+			pk:     technicalID,
+			label:  servermap.DisplayLabel(gameID, regionKey, serverKey),
+			gameID: gameID,
+			region: regionKey,
 		}, nil
 	}
 
