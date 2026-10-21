@@ -33,7 +33,14 @@ import (
 
 var webhookURLPattern = regexp.MustCompile(`^https://discord\.com/api/webhooks/[0-9]+/[A-Za-z0-9_-]+$`)
 
-const allowedOrigin = "https://serversup.armasn.dev"
+// allowedOrigin is the canonical site origin (default CORS value); the legacy host stays
+// allowed while serversup.armasn.dev redirects to serversup.app.
+const allowedOrigin = "https://serversup.app"
+
+var allowedOrigins = map[string]bool{
+	allowedOrigin:                  true,
+	"https://serversup.armasn.dev": true,
+}
 
 type subscribeRequest struct {
 	WebhookURL string `json:"webhookUrl"`
@@ -127,9 +134,20 @@ func NewHandler() *apiHandler {
 }
 
 func (h *apiHandler) HandleRequest(ctx context.Context, event events.LambdaFunctionURLRequest) (events.LambdaFunctionURLResponse, error) {
+	origin := ""
+	if event.Headers != nil {
+		origin = event.Headers["origin"]
+		if origin == "" {
+			origin = event.Headers["Origin"]
+		}
+	}
+	allowOrigin := allowedOrigin
+	if allowedOrigins[origin] {
+		allowOrigin = origin
+	}
 	headers := map[string]string{
 		"Content-Type":                 "application/json",
-		"Access-Control-Allow-Origin":  allowedOrigin,
+		"Access-Control-Allow-Origin":  allowOrigin,
 		"Access-Control-Allow-Methods": "POST, OPTIONS",
 		"Access-Control-Allow-Headers": "Content-Type",
 	}
@@ -145,14 +163,7 @@ func (h *apiHandler) HandleRequest(ctx context.Context, event events.LambdaFunct
 		return errResponse(405, "method not allowed", headers), nil
 	}
 
-	origin := ""
-	if event.Headers != nil {
-		origin = event.Headers["origin"]
-		if origin == "" {
-			origin = event.Headers["Origin"]
-		}
-	}
-	if origin != "" && origin != allowedOrigin {
+	if origin != "" && !allowedOrigins[origin] {
 		return errResponse(403, "origin not allowed", headers), nil
 	}
 
