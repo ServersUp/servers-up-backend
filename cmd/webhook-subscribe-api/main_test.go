@@ -108,6 +108,18 @@ func TestOriginReject(t *testing.T) {
 	}
 }
 
+func TestLegacyOriginAllowed(t *testing.T) {
+	h := testHandler(&fakeStore{})
+	body := `{"webhookUrl":"https://discord.com/api/webhooks/123/abc","game":"wow","region":"us","server":"illidan"}`
+	resp := invoke(h, body, "https://serversup.armasn.dev")
+	if resp.StatusCode == 403 {
+		t.Fatalf("legacy origin rejected")
+	}
+	if got := resp.Headers["Access-Control-Allow-Origin"]; got != "https://serversup.armasn.dev" {
+		t.Fatalf("allow-origin %q", got)
+	}
+}
+
 func TestDuplicate(t *testing.T) {
 	store := &fakeStore{subs: []models.Subscription{
 		{

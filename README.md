@@ -36,7 +36,7 @@ Others look temporary (rate limits, Discord or network trouble). Those stay on t
 - **Secrets** (SSM Parameter Store): API keys and tokens. Lambdas load these at runtime.
 
 **Public status snapshot**  
-When a poller reports `Changed > 0`, it asynchronously invokes **StatusSnapshotLambda**. The snapshot Lambda joins the shared catalog with the status table and writes `status/latest.json` to S3. CloudFront serves the JSON at [serversup.armasn.dev/status/latest.json](https://serversup.armasn.dev/status/latest.json), and the live [ServersUp status page](https://serversup.armasn.dev/) reads it without calling Discord or DynamoDB from the browser.
+When a poller reports `Changed > 0`, it asynchronously invokes **StatusSnapshotLambda**. The snapshot Lambda joins the shared catalog with the status table and writes `status/latest.json` to S3. CloudFront serves the JSON at [serversup.app/status/latest.json](https://serversup.app/status/latest.json), and the live [ServersUp status page](https://serversup.app/) reads it without calling Discord or DynamoDB from the browser.
 
 **Caching**  
 Hot paths avoid hammering S3, SSM, or DynamoDB on every request: server-mapping and secrets are cached with a TTL; the bot caches guild channel names and `/status` results briefly; pollers reuse credentials across invocations on a warm instance. The Battle.net client reuses HTTP connections to each regional API host during a poll (keep-alive, tuned idle pool for concurrent realm fetches).
