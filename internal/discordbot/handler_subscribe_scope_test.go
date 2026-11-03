@@ -173,3 +173,24 @@ func TestResolveSubscribeTarget(t *testing.T) {
 		})
 	}
 }
+
+func TestHandleRequest_SubscribeRegionScopeWithoutStoreRejected(t *testing.T) {
+	t.Parallel()
+	f := newTestHandlerFixture(t)
+	f.handler.scopeStates = nil
+
+	var addCalls int
+	f.db.AddFunc = func(ctx context.Context, sub models.Subscription) error {
+		addCalls++
+		return nil
+	}
+
+	content := subscribeRespContent(t, f, subscribeBody(`{"name": "game", "value": "wow"}, {"name": "region", "value": "us"}`))
+
+	if addCalls != 0 {
+		t.Fatalf("no subscription should be written, got %d", addCalls)
+	}
+	if !strings.Contains(content, "temporarily unavailable") {
+		t.Fatalf("expected unavailable message, got %q", content)
+	}
+}
