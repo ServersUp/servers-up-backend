@@ -66,6 +66,13 @@ func (h *Handler) handleSubscribe(ctx context.Context, interaction discord.Inter
 		return *resp, nil
 	}
 
+	// Region-wide subscriptions need the scope store; refuse before writing a row
+	// the aggregator could never baseline.
+	if target.scopeType != "" && h.scopeStates == nil {
+		slog.Error("scope state store not configured; rejecting wildcard subscribe", "guildID", interaction.GuildID, "pk", target.pk)
+		return h.discordResponse("Region-wide subscriptions are temporarily unavailable. Please subscribe to a specific server for now.")
+	}
+
 	mention := ""
 	if roleID != "" {
 		mention = fmt.Sprintf("<@&%s>", roleID)
