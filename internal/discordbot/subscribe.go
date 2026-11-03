@@ -23,6 +23,11 @@ func (h *Handler) handleSubscribe(ctx context.Context, interaction discord.Inter
 		return resp, nil
 	}
 
+	// A row without a guild or channel can never be delivered or listed.
+	if interaction.GuildID == "" || interaction.ChannelID == "" {
+		return h.discordResponse("Run `/subscribe` inside a server channel so alerts have somewhere to go.")
+	}
+
 	rawGame := h.getOption(data.Options, "game")
 	rawRegion := h.getOption(data.Options, "region")
 	rawServer := h.getOption(data.Options, "server")
@@ -94,6 +99,12 @@ func (h *Handler) handleSubscribe(ctx context.Context, interaction discord.Inter
 	}
 	for _, e := range existing {
 		if e.ChannelID == interaction.ChannelID && e.ServerID == target.pk {
+			if target.scopeType != "" {
+				// Repair a row left without ScopeState by an earlier failed subscribe.
+				if err := h.ensureScopeBaseline(ctx, target.gameID, target.region, target.pk, mapping); err != nil {
+					slog.Warn("failed to repair scope baseline", "error", err, "scopeKey", target.pk)
+				}
+			}
 			return h.discordResponse(h.alreadySubscribedMessage(ctx, interaction.GuildID, interaction.ChannelID, target.label, e.RoleName, e.Mention))
 		}
 	}
@@ -133,9 +144,13 @@ func (h *Handler) handleSubscribe(ctx context.Context, interaction discord.Inter
 
 	if target.scopeType != "" {
 		if err := h.ensureScopeBaseline(ctx, target.gameID, target.region, target.pk, mapping); err != nil {
-			// The aggregator defensively baselines on its next run; never fail
-			// the subscription for a baseline hiccup.
-			slog.Warn("failed to ensure scope baseline", "error", err, "scopeKey", target.pk)
+			// The aggregator only iterates ScopeState rows, so a wildcard row
+			// without one never alerts. Roll back rather than claim success.
+			slog.Error("failed to ensure scope baseline; rolling back subscription", "error", err, "scopeKey", target.pk)
+			if derr := h.database.DeleteSubscription(ctx, sub.GuildID, sub.ChannelID, sub.ServerID, sub.SubscriptionID); derr != nil {
+				slog.Error("failed to roll back subscription", "error", derr, "subscriptionID", sub.SubscriptionID)
+			}
+			return h.discordResponse("Failed to create subscription. Please try again later.")
 		}
 	}
 
@@ -214,6 +229,9 @@ func (h *Handler) resolveSubscribeTarget(mapping servermap.Mapping, gameName, re
 	if !valid {
 		msg := fmt.Sprintf("Unknown region **%s** for that game. Run `/subscribe` and pick from the suggestions.", strings.ToUpper(regionName))
 		return subscribeTarget{}, msgRespPtr(msg)
+	}
+	if len(mapping.Games[gameName].Regions[regionName].Servers) == 0 {
+		return subscribeTarget{}, msgRespPtr("That region has no servers to watch yet.")
 	}
 	return subscribeTarget{
 		pk:        scope.Key(gameName, regionName),
