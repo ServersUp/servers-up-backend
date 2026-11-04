@@ -4,6 +4,12 @@ All notable user-facing changes to ServersUp Backend will be documented in this 
 
 This changelog is intended to be readable for end users and can be published directly to the project website.
 
+## v1.5.1 — 2026-11-04
+
+### Fixed
+- **Region-wide subscriptions** — running `/subscribe` with a game and region (no server) could fail without a confirmation, and those subscriptions never sent alerts. They now work reliably, and any affected subscriptions have been repaired, so you do not need to resubscribe.
+- **Clearer `/subscribe` errors** — if setup fails partway, the bot now tells you to try again instead of saving a subscription that cannot alert. `/subscribe` also asks you to run it in a server channel, and it no longer accepts a region that has no servers.
+
 ## v1.5 — 2026-08-10
 
 ### Added
