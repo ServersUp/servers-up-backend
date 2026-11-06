@@ -185,3 +185,46 @@ func TestClient_BuildRealmConfigs(t *testing.T) {
 		t.Fatalf("second realm: %+v", got[1])
 	}
 }
+
+func TestClient_GetRulesetStatus(t *testing.T) {
+	var gotPath, gotQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotQuery = r.URL.Path, r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"id": 2, "name": "Normal", "status": {"type": "UP", "name": "Up"}}`)
+	}))
+	defer server.Close()
+
+	client := NewClient("id", "secret")
+	client.token = "fake-token"
+	client.apiURL = server.URL + "/%s"
+
+	resp, err := client.GetRulesetStatus(context.Background(), "eu", 2, "en_GB")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Status.Type != "UP" || resp.Name != "Normal" {
+		t.Fatalf("unexpected response: %+v", resp)
+	}
+	if gotPath != "/eu/data/wow/ruleset/2" || !strings.Contains(gotQuery, "namespace=dynamic-forever-eu") {
+		t.Fatalf("unexpected request: %s ?%s", gotPath, gotQuery)
+	}
+}
+
+func TestClient_GetRulesetStatus_nonOKIsError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"code":404}`, http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	client := NewClient("id", "secret")
+	client.token = "fake-token"
+	client.apiURL = server.URL + "/%s"
+
+	if _, err := client.GetRulesetStatus(context.Background(), "us", 99, "en_US"); err == nil {
+		t.Fatal("expected error on 404")
+	}
+	if _, err := NewClient("id", "secret").GetRulesetStatus(context.Background(), "us", 1, "en_US"); err == nil {
+		t.Fatal("expected error when unauthenticated")
+	}
+}

@@ -33,3 +33,10 @@ type Status struct {
 	Type string `json:"type"` // e.g., "UP", "DOWN"
 	Name string `json:"name"`
 }
+
+// RulesetResponse is the WoW Forever ruleset payload (undocumented Game Data endpoint).
+type RulesetResponse struct {
+	ID     int    `json:"id"`
+	Name   string `json:"name"`
+	Status Status `json:"status"`
+}

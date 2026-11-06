@@ -1,0 +1,6 @@
+type: lambda
+function_names:
+  - ForeverPollingLambda
+regions:
+  - name: us-east-1
+    alias: production
