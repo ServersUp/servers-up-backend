@@ -160,19 +160,28 @@ func (m Mapping) HumanLabel(technicalServerID string) string {
 // more than one game, formatted "id: gameA, gameB". The Subscriptions table is keyed on the
 // technical ID alone, so a shared ID would deliver one game's alerts to another's subscribers.
 func (m Mapping) DuplicateServerIDs() []string {
-	owners := map[string][]string{}
+	// Several servers of one game may share an identifier (WoW connected realms), so
+	// track the set of games per ID, not the number of servers.
+	owners := map[string]map[string]struct{}{}
 	for gameID, game := range m.Games {
 		for regionKey, region := range game.Regions {
 			for _, server := range region.Servers {
 				id := fmt.Sprintf("%s#%s#%v", game.Provider, regionKey, server.Identifier)
-				owners[id] = append(owners[id], gameID)
+				if owners[id] == nil {
+					owners[id] = map[string]struct{}{}
+				}
+				owners[id][gameID] = struct{}{}
 			}
 		}
 	}
 	var out []string
-	for id, games := range owners {
-		if len(games) < 2 {
+	for id, set := range owners {
+		if len(set) < 2 {
 			continue
+		}
+		games := make([]string, 0, len(set))
+		for g := range set {
+			games = append(games, g)
 		}
 		sort.Strings(games)
 		out = append(out, id+": "+strings.Join(games, ", "))
