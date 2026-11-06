@@ -23,6 +23,10 @@ func edgeMapping(m *servermap.Mapping) {
 		"ffxiv": {Provider: "lodestone", Regions: map[string]servermap.Region{
 			"na": {Servers: map[string]servermap.Server{"alpha": {Identifier: 1}}},
 		}},
+		"forever": {Provider: "battlenet", Regions: map[string]servermap.Region{
+			"us": {Servers: map[string]servermap.Server{"pvp": {Identifier: 1}, "normal": {Identifier: 2}, "roleplay": {Identifier: 3}, "roleplay-pvp": {Identifier: 15}}},
+			"kr": {Servers: map[string]servermap.Server{"pvp": {Identifier: 1}, "normal": {Identifier: 2}}},
+		}},
 		"ghost": {Provider: "other", Regions: map[string]servermap.Region{
 			"void": {Servers: map[string]servermap.Server{}},
 		}},
@@ -119,6 +123,13 @@ func TestSubscribeEdge_Inputs(t *testing.T) {
 		{"very long game", edgeBody("g1", "c1", admin, "game", strings.Repeat("a", 20000), "region", "us"), "", "Unknown game"},
 		{"unicode server", edgeBody("g1", "c1", admin, "game", "wow", "region", "us", "server", "иллидан"), "", ""},
 		{"only separators", edgeBody("g1", "c1", admin, "game", "---", "region", "us"), "", "game"},
+
+		// WoW Forever (rulesets are the servers)
+		{"forever ruleset", edgeBody("g1", "c1", admin, "game", "forever", "region", "us", "server", "normal"), "battlenet#us#2", "Subscribed"},
+		{"forever hyphenated ruleset", edgeBody("g1", "c1", admin, "game", "forever", "region", "us", "server", "Roleplay PvP"), "battlenet#us#15", "Subscribed"},
+		{"forever kr only has two rulesets", edgeBody("g1", "c1", admin, "game", "forever", "region", "kr", "server", "roleplay"), "", ""},
+		{"forever eu not in catalog", edgeBody("g1", "c1", admin, "game", "forever", "region", "eu"), "", "Unknown region"},
+		{"forever region wildcard", edgeBody("g1", "c1", admin, "game", "forever", "region", "us"), "region#forever#us", "WoW Forever"},
 
 		// wildcard
 		{"region wildcard", edgeBody("g1", "c1", admin, "game", "wow", "region", "us"), "region#wow#us", "all"},

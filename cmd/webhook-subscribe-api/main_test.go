@@ -204,6 +204,18 @@ func testMapping() *servermap.Mapping {
 				}},
 			},
 		},
+		"forever": {
+			Provider: "battlenet",
+			Regions: map[string]servermap.Region{
+				"us": {Servers: map[string]servermap.Server{
+					"pvp":    {Identifier: 1},
+					"normal": {Identifier: 2},
+				}},
+				"kr": {Servers: map[string]servermap.Server{
+					"pvp": {Identifier: 1},
+				}},
+			},
+		},
 	}}
 }
 
@@ -293,5 +305,23 @@ func TestResolveTargetScopes(t *testing.T) {
 		if pk != tc.wantPK || scopeType != tc.wantScope {
 			t.Fatalf("resolveTarget(%q,%q,%q) = (%q, scope %q), want (%q, %q)", tc.game, tc.region, tc.server, pk, scopeType, tc.wantPK, tc.wantScope)
 		}
+	}
+}
+
+func TestResolveTargetForever(t *testing.T) {
+	h := testScopeHandler(&fakeStore{}, &fakeScopeStore{})
+	pk, label, scopeType, game, _, err := h.resolveTarget(context.Background(), "forever", "us", "normal")
+	if err != nil || pk != "battlenet#us#2" || label != "forever-us-normal" || scopeType != "" || game != "forever" {
+		t.Fatalf("got %q %q %q %q %v", pk, label, scopeType, game, err)
+	}
+	pk, label, scopeType, _, _, err = h.resolveTarget(context.Background(), "forever", "us", "")
+	if err != nil || pk != "region#forever#us" || scopeType != "region" || label != "All WoW Forever servers — US" {
+		t.Fatalf("got %q %q %q %v", pk, label, scopeType, err)
+	}
+	if _, _, _, _, _, err := h.resolveTarget(context.Background(), "forever", "kr", "roleplay"); err == nil {
+		t.Fatal("KR has no roleplay ruleset")
+	}
+	if _, _, _, _, _, err := h.resolveTarget(context.Background(), "forever", "eu", ""); err == nil {
+		t.Fatal("EU is not in this fixture")
 	}
 }

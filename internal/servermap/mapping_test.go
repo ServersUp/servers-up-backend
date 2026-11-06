@@ -256,3 +256,46 @@ func TestLoadFromTestdata(t *testing.T) {
 		t.Fatalf("us argent-dawn lookup: %s %s %v", regionKey, serverKey, err)
 	}
 }
+
+func foreverMapping() Mapping {
+	rs := func(ids ...int) Region {
+		names := []string{"pvp", "normal", "roleplay", "roleplay-pvp"}
+		r := Region{Servers: map[string]Server{}}
+		for i, id := range ids {
+			r.Servers[names[i]] = Server{Identifier: id}
+		}
+		return r
+	}
+	return Mapping{Games: map[string]Game{
+		"wow":     {Provider: "battlenet", Regions: map[string]Region{"us": {Servers: map[string]Server{"illidan": {Identifier: 57}}}}},
+		"forever": {Provider: "battlenet", Regions: map[string]Region{"us": rs(1, 2, 3, 15), "kr": rs(1, 2)}},
+	}}
+}
+
+func TestDuplicateServerIDs(t *testing.T) {
+	t.Parallel()
+	m := foreverMapping()
+	if d := m.DuplicateServerIDs(); len(d) != 0 {
+		t.Fatalf("unexpected duplicates: %v", d)
+	}
+	// A WoW connected realm that reuses a Forever ruleset ID must be flagged.
+	m.Games["wow"].Regions["us"].Servers["newrealm"] = Server{Identifier: 2}
+	d := m.DuplicateServerIDs()
+	if len(d) != 1 || d[0] != "battlenet#us#2: forever, wow" {
+		t.Fatalf("got %v", d)
+	}
+}
+
+func TestHumanLabel_Forever(t *testing.T) {
+	t.Parallel()
+	m := foreverMapping()
+	if got := m.HumanLabel("battlenet#us#2"); got != "forever-us-normal" {
+		t.Fatalf("got %q", got)
+	}
+	if got := m.HumanLabel("battlenet#kr#2"); got != "forever-kr-normal" {
+		t.Fatalf("got %q", got)
+	}
+	if got := m.HumanLabel("battlenet#us#57"); got != "wow-us-illidan" {
+		t.Fatalf("got %q", got)
+	}
+}

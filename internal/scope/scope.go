@@ -92,6 +92,8 @@ func GameDisplayName(gameID string) string {
 		return "WoW"
 	case "ffxiv":
 		return "FFXIV"
+	case "forever":
+		return "WoW Forever"
 	case "":
 		return ""
 	}

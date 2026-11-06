@@ -13,8 +13,8 @@ type Mapping struct {
 }
 
 type Game struct {
-	Provider string             `json:"provider"`
-	Regions  map[string]Region  `json:"regions"`
+	Provider string            `json:"provider"`
+	Regions  map[string]Region `json:"regions"`
 }
 
 type Region struct {
@@ -154,4 +154,29 @@ func (m Mapping) HumanLabel(technicalServerID string) string {
 		}
 	}
 	return technicalServerID
+}
+
+// DuplicateServerIDs returns technical server IDs (provider#region#identifier) claimed by
+// more than one game, formatted "id: gameA, gameB". The Subscriptions table is keyed on the
+// technical ID alone, so a shared ID would deliver one game's alerts to another's subscribers.
+func (m Mapping) DuplicateServerIDs() []string {
+	owners := map[string][]string{}
+	for gameID, game := range m.Games {
+		for regionKey, region := range game.Regions {
+			for _, server := range region.Servers {
+				id := fmt.Sprintf("%s#%s#%v", game.Provider, regionKey, server.Identifier)
+				owners[id] = append(owners[id], gameID)
+			}
+		}
+	}
+	var out []string
+	for id, games := range owners {
+		if len(games) < 2 {
+			continue
+		}
+		sort.Strings(games)
+		out = append(out, id+": "+strings.Join(games, ", "))
+	}
+	sort.Strings(out)
+	return out
 }
