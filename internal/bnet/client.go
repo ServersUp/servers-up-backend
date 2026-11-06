@@ -285,3 +285,36 @@ func (c *Client) getJSON(ctx context.Context, rawURL string, target any) error {
 	}
 	return nil
 }
+
+// GetRulesetStatus fetches the status of a WoW Forever ruleset. The endpoint and the
+// dynamic-forever-<region> namespace are undocumented by Blizzard and may change.
+func (c *Client) GetRulesetStatus(ctx context.Context, region string, rulesetID int, locale string) (*RulesetResponse, error) {
+	if c.token == "" {
+		return nil, fmt.Errorf("not authenticated")
+	}
+
+	baseURL := fmt.Sprintf(c.apiURL, region)
+	url := fmt.Sprintf("%s/data/wow/ruleset/%d?namespace=dynamic-forever-%s&locale=%s", baseURL, rulesetID, region, locale)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to get ruleset status: status %d", resp.StatusCode)
+	}
+
+	var out RulesetResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
