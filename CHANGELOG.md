@@ -4,6 +4,11 @@ All notable user-facing changes to ServersUp Backend will be documented in this 
 
 This changelog is intended to be readable for end users and can be published directly to the project website.
 
+## v1.6 — 2026-11-07
+
+### Added
+- **World of Warcraft: Forever** — live status and alerts for Forever. Forever has no realms, so ServersUp tracks each **ruleset** (Normal, PvP, Roleplay and Roleplay PvP) in the US, EU, KR and TW regions. Subscribe with `/subscribe` (game `forever`, a region, and optionally a ruleset) or with a webhook on the [install page](https://serversup.app/install/). Pick just a region to be told once when every ruleset in it is down and once when they all recover.
+
 ## v1.5.1 — 2026-11-04
 
 ### Fixed
