@@ -47,7 +47,7 @@ func (m Mapping) ListGames() []string {
 }
 
 func (m Mapping) ListRegions(gameID string) ([]string, error) {
-	gameID = NormalizeKey(gameID)
+	gameID = NormalizeGameKey(gameID)
 	if gameID == "" {
 		return nil, ErrMissingGame
 	}
@@ -64,7 +64,7 @@ func (m Mapping) ListRegions(gameID string) ([]string, error) {
 }
 
 func (m Mapping) ListServers(gameID, regionID string) ([]string, error) {
-	gameID = NormalizeKey(gameID)
+	gameID = NormalizeGameKey(gameID)
 	regionID = NormalizeKey(regionID)
 	if gameID == "" {
 		return nil, ErrMissingGame
@@ -91,7 +91,7 @@ func (m Mapping) ListServers(gameID, regionID string) ([]string, error) {
 // Lookup finds a game, region, and server after normalizing inputs.
 // It returns normalized keys plus the game and server entries.
 func (m Mapping) Lookup(gameInput, regionInput, serverInput string) (gameID, regionKey, serverKey string, game Game, server Server, err error) {
-	gameID = NormalizeKey(gameInput)
+	gameID = NormalizeGameKey(gameInput)
 	regionKey = NormalizeKey(regionInput)
 	serverKey = NormalizeKey(serverInput)
 
@@ -125,7 +125,7 @@ func (m Mapping) Lookup(gameInput, regionInput, serverInput string) (gameID, reg
 
 // DisplayLabel returns the display label for a known game/region/server tuple (e.g. "wow-eu-kazzak").
 func DisplayLabel(gameID, regionKey, serverKey string) string {
-	return fmt.Sprintf("%s-%s-%s", gameID, regionKey, serverKey)
+	return fmt.Sprintf("%s-%s-%s", DisplayGameKey(gameID), regionKey, serverKey)
 }
 
 // HumanLabel maps a technical server ID (provider#region#identifier) to a display label (game-region-server).

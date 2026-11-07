@@ -87,3 +87,41 @@ func TestAutocompleteServers_listsServers(t *testing.T) {
 		t.Fatalf("got %+v", choices)
 	}
 }
+
+func TestAutocompleteGames_forever(t *testing.T) {
+	t.Parallel()
+	m := servermap.Mapping{Games: map[string]servermap.Game{"wow": {}, "forever": {}, "ffxiv": {}}}
+	names := func(partial string) []string {
+		var out []string
+		for _, c := range autocompleteGames(m, partial, 25) {
+			if c.Name != c.Value {
+				t.Fatalf("name and value must match: %+v", c)
+			}
+			out = append(out, c.Value)
+		}
+		return out
+	}
+	cases := []struct {
+		partial string
+		want    []string
+	}{
+		{"", []string{"ffxiv", "wow", "wow-forever"}},
+		{"w", []string{"wow", "wow-forever"}},
+		{"wow-f", []string{"wow-forever"}},
+		{"WoW Forever", []string{"wow-forever"}},
+		{"forever", []string{"wow-forever"}}, // the internal ID still finds it
+		{"fo", []string{"wow-forever"}},
+		{"zzz", nil},
+	}
+	for _, tc := range cases {
+		got := names(tc.partial)
+		if len(got) != len(tc.want) {
+			t.Fatalf("partial %q: got %v want %v", tc.partial, got, tc.want)
+		}
+		for i := range got {
+			if got[i] != tc.want[i] {
+				t.Fatalf("partial %q: got %v want %v", tc.partial, got, tc.want)
+			}
+		}
+	}
+}

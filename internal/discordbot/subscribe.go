@@ -33,7 +33,7 @@ func (h *Handler) handleSubscribe(ctx context.Context, interaction discord.Inter
 	rawServer := h.getOption(data.Options, "server")
 	roleID := h.getOption(data.Options, "role")
 
-	gameName := servermap.NormalizeKey(rawGame)
+	gameName := servermap.NormalizeGameKey(rawGame)
 	regionName := servermap.NormalizeKey(rawRegion)
 	serverName := servermap.NormalizeKey(rawServer)
 
@@ -245,7 +245,7 @@ func (h *Handler) resolveSubscribeTarget(mapping servermap.Mapping, gameName, re
 // subscribeSuccess builds the confirmation message. Wildcard scopes mention the
 // aggregate (all down / all up) behavior.
 // foreverStatusNote is appended to Forever confirmations: Blizzard's ruleset status is the only signal.
-const foreverStatusNote = "\n⚠️ Forever status comes from Blizzard's ruleset status, which can lag behind in-game outages and may miss short ones while the game is in early launch."
+const foreverStatusNote = "\n" + scope.ForeverStatusNote
 
 func (h *Handler) subscribeSuccess(ctx context.Context, guildID, channelID, gameID, label, scopeType, roleName, mention string) (events.LambdaFunctionURLResponse, error) {
 	chLabel := h.channelPretty(ctx, guildID, channelID)
