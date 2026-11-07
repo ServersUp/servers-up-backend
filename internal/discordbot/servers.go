@@ -14,7 +14,7 @@ import (
 func (h *Handler) handleServers(ctx context.Context, data discord.InteractionData) (events.LambdaFunctionURLResponse, error) {
 	rawGame := h.getOption(data.Options, "game")
 	rawRegion := h.getOption(data.Options, "region")
-	gameName := servermap.NormalizeKey(rawGame)
+	gameName := servermap.NormalizeGameKey(rawGame)
 	regionName := servermap.NormalizeKey(rawRegion)
 
 	slog.Info("servers list requested", "rawGame", rawGame, "gameName", gameName, "rawRegion", rawRegion, "regionName", regionName)

@@ -8,10 +8,10 @@ import (
 func TestSplitGameServerHuman(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		in           string
-		wantGame     string
-		wantRegion   string
-		wantServer   string
+		in         string
+		wantGame   string
+		wantRegion string
+		wantServer string
 	}{
 		{"wow-us-illidan", "wow", "us", "illidan"},
 		{"wow-eu-kazzak", "wow", "eu", "kazzak"},
@@ -53,3 +53,19 @@ func FuzzSplitGameServerHuman(f *testing.F) {
 	})
 }
 
+func TestSplitGameServerHuman_forever(t *testing.T) {
+	t.Parallel()
+	cases := []struct{ in, game, region, server string }{
+		{"wow-forever-us-normal", "wow-forever", "us", "normal"},
+		{"wow-forever-us-roleplay-pvp", "wow-forever", "us", "roleplay-pvp"},
+		{"forever-us-pvp", "forever", "us", "pvp"},
+		{"wow-us-area-52", "wow", "us", "area-52"},
+		{"wow-illidan", "wow", "", "illidan"},
+	}
+	for _, tc := range cases {
+		g, r, s := splitGameServerHuman(tc.in)
+		if g != tc.game || r != tc.region || s != tc.server {
+			t.Errorf("splitGameServerHuman(%q) = (%q,%q,%q), want (%q,%q,%q)", tc.in, g, r, s, tc.game, tc.region, tc.server)
+		}
+	}
+}

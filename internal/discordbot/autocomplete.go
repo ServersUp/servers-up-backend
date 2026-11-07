@@ -30,14 +30,14 @@ func (h *Handler) handleAutocomplete(ctx context.Context, interaction discord.In
 		case "game":
 			return h.autocompleteResponse(autocompleteGames(mapping, optionStringValue(focused), maxChoices))
 		case "region":
-			gameNorm := servermap.NormalizeKey(h.getOption(data.Options, "game"))
+			gameNorm := servermap.NormalizeGameKey(h.getOption(data.Options, "game"))
 			choices, err := autocompleteRegions(mapping, gameNorm, optionStringValue(focused), maxChoices)
 			if err != nil {
 				return h.autocompleteResponse(nil)
 			}
 			return h.autocompleteResponse(choices)
 		case "server":
-			gameNorm := servermap.NormalizeKey(h.getOption(data.Options, "game"))
+			gameNorm := servermap.NormalizeGameKey(h.getOption(data.Options, "game"))
 			regionNorm := servermap.NormalizeKey(h.getOption(data.Options, "region"))
 			choices, err := autocompleteServers(mapping, gameNorm, regionNorm, optionStringValue(focused), maxChoices)
 			if err != nil {
@@ -67,7 +67,7 @@ func (h *Handler) handleAutocomplete(ctx context.Context, interaction discord.In
 		case "game":
 			return h.autocompleteResponse(autocompleteGames(mapping, optionStringValue(focused), maxChoices))
 		case "region":
-			gameNorm := servermap.NormalizeKey(h.getOption(data.Options, "game"))
+			gameNorm := servermap.NormalizeGameKey(h.getOption(data.Options, "game"))
 			choices, err := autocompleteRegions(mapping, gameNorm, optionStringValue(focused), maxChoices)
 			if err != nil {
 				return h.autocompleteResponse(nil)

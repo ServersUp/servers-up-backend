@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -311,7 +313,7 @@ func TestResolveTargetScopes(t *testing.T) {
 func TestResolveTargetForever(t *testing.T) {
 	h := testScopeHandler(&fakeStore{}, &fakeScopeStore{})
 	pk, label, scopeType, game, _, err := h.resolveTarget(context.Background(), "forever", "us", "normal")
-	if err != nil || pk != "battlenet#us#2" || label != "forever-us-normal" || scopeType != "" || game != "forever" {
+	if err != nil || pk != "battlenet#us#2" || label != "wow-forever-us-normal" || scopeType != "" || game != "forever" {
 		t.Fatalf("got %q %q %q %q %v", pk, label, scopeType, game, err)
 	}
 	pk, label, scopeType, _, _, err = h.resolveTarget(context.Background(), "forever", "us", "")
@@ -323,5 +325,52 @@ func TestResolveTargetForever(t *testing.T) {
 	}
 	if _, _, _, _, _, err := h.resolveTarget(context.Background(), "forever", "eu", ""); err == nil {
 		t.Fatal("EU is not in this fixture")
+	}
+}
+
+func TestResolveTargetWowForeverAlias(t *testing.T) {
+	h := testScopeHandler(&fakeStore{}, &fakeScopeStore{})
+	for _, game := range []string{"wow-forever", "WoW Forever", "forever"} {
+		pk, label, scopeType, gameID, _, err := h.resolveTarget(context.Background(), game, "us", "normal")
+		if err != nil || pk != "battlenet#us#2" || label != "wow-forever-us-normal" || scopeType != "" || gameID != "forever" {
+			t.Fatalf("%q: got %q %q %q %q %v", game, pk, label, scopeType, gameID, err)
+		}
+	}
+	pk, label, scopeType, gameID, _, err := h.resolveTarget(context.Background(), "wow-forever", "us", "")
+	if err != nil || pk != "region#forever#us" || scopeType != "region" || gameID != "forever" || label != "All WoW Forever servers — US" {
+		t.Fatalf("region: got %q %q %q %q %v", pk, label, scopeType, gameID, err)
+	}
+}
+
+func TestProveWebhookForeverNote(t *testing.T) {
+	var sent []string
+	h := &apiHandler{httpClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) *http.Response {
+		b, _ := io.ReadAll(req.Body)
+		var payload struct{ Content string }
+		_ = json.Unmarshal(b, &payload) // decode: the encoder escapes <, @ and & as \u00XX
+		sent = append(sent, payload.Content)
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: http.NoBody}
+	})}}
+	const note = "may miss short ones while the game is in early launch"
+	for _, tc := range []struct {
+		game     string
+		wantNote bool
+	}{{"forever", true}, {"wow", false}, {"ffxiv", false}} {
+		sent = nil
+		if err := h.proveWebhook(context.Background(), "https://discord.com/api/webhooks/1/abc", "", tc.game); err != nil {
+			t.Fatal(err)
+		}
+		if len(sent) != 1 || !strings.Contains(sent[0], "ServersUp ownership verification") {
+			t.Fatalf("%s: %v", tc.game, sent)
+		}
+		if got := strings.Contains(sent[0], note); got != tc.wantNote {
+			t.Fatalf("%s: note present=%v want %v in %s", tc.game, got, tc.wantNote, sent[0])
+		}
+	}
+	// the role mention still leads the message
+	sent = nil
+	_ = h.proveWebhook(context.Background(), "https://discord.com/api/webhooks/1/abc", "123", "forever")
+	if !strings.Contains(sent[0], "<@&123> ServersUp ownership verification") {
+		t.Fatalf("role mention lost: %s", sent[0])
 	}
 }
