@@ -165,7 +165,7 @@ func (h *Handler) handleSubscribe(ctx context.Context, interaction discord.Inter
 
 	metrics.EmitCount(metrics.Namespace, "SubscriptionWrite", map[string]string{"command": "subscribe", "scope": target.scopeType}, 1)
 
-	return h.subscribeSuccess(ctx, interaction.GuildID, interaction.ChannelID, target.label, target.scopeType, roleName, mention)
+	return h.subscribeSuccess(ctx, interaction.GuildID, interaction.ChannelID, target.gameID, target.label, target.scopeType, roleName, mention)
 }
 
 // subscribeTarget is a resolved subscription target.
@@ -202,10 +202,10 @@ func (h *Handler) resolveSubscribeTarget(mapping servermap.Mapping, gameName, re
 		}
 		technicalID := serverid.Generate(game.Provider, regionKey, server.Identifier)
 		return subscribeTarget{
-			pk:        technicalID,
-			label:     servermap.DisplayLabel(gameID, regionKey, serverKey),
-			gameID:    gameID,
-			region:    regionKey,
+			pk:     technicalID,
+			label:  servermap.DisplayLabel(gameID, regionKey, serverKey),
+			gameID: gameID,
+			region: regionKey,
 		}, nil
 	}
 
@@ -244,11 +244,17 @@ func (h *Handler) resolveSubscribeTarget(mapping servermap.Mapping, gameName, re
 
 // subscribeSuccess builds the confirmation message. Wildcard scopes mention the
 // aggregate (all down / all up) behavior.
-func (h *Handler) subscribeSuccess(ctx context.Context, guildID, channelID, label, scopeType, roleName, mention string) (events.LambdaFunctionURLResponse, error) {
+// foreverStatusNote is appended to Forever confirmations: Blizzard's ruleset status is the only signal.
+const foreverStatusNote = "\n⚠️ Forever status comes from Blizzard's ruleset status, which can lag behind in-game outages and may miss short ones while the game is in early launch."
+
+func (h *Handler) subscribeSuccess(ctx context.Context, guildID, channelID, gameID, label, scopeType, roleName, mention string) (events.LambdaFunctionURLResponse, error) {
 	chLabel := h.channelPretty(ctx, guildID, channelID)
 	aggNote := ""
 	if scopeType != "" {
 		aggNote = " You'll be notified once when they all go down and once when they all come back up."
+	}
+	if gameID == "forever" {
+		aggNote += foreverStatusNote
 	}
 	switch {
 	case roleName != "":
