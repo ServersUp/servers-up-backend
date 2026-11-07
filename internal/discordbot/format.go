@@ -48,6 +48,9 @@ func (h *Handler) subscriptionUnsubscribeChoiceText(ctx context.Context, guildID
 // splitGameServerHuman splits a display label (e.g. "wow-us-illidan") into game, region, and server.
 // Legacy labels without a region (e.g. "wow-illidan") return an empty region.
 func splitGameServerHuman(human string) (game, region, server string) {
+	if g, r, s, ok := servermap.SplitDisplayLabel(human); ok {
+		return g, r, s
+	}
 	parts := strings.Split(human, "-")
 	if len(parts) >= 3 {
 		return parts[0], parts[1], strings.Join(parts[2:], "-")

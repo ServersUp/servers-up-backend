@@ -13,7 +13,7 @@ import (
 
 func (h *Handler) handleRegions(ctx context.Context, data discord.InteractionData) (events.LambdaFunctionURLResponse, error) {
 	rawGame := h.getOption(data.Options, "game")
-	gameName := servermap.NormalizeKey(rawGame)
+	gameName := servermap.NormalizeGameKey(rawGame)
 	slog.Info("regions list requested", "rawGame", rawGame, "gameName", gameName)
 
 	if gameName == "" {

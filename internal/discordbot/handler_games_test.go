@@ -9,6 +9,7 @@ import (
 
 	"github.com/ServersUp/servers-up-backend/internal/discord"
 	"github.com/ServersUp/servers-up-backend/internal/models"
+	"github.com/ServersUp/servers-up-backend/internal/servermap"
 )
 
 func TestHandleRequest_Games(t *testing.T) {
@@ -95,5 +96,27 @@ func TestHandleRequest_Servers(t *testing.T) {
 	}
 	if !strings.Contains(discordResp.Data.Content, "`alpha`") {
 		t.Fatalf("expected wipe servers, got %q", discordResp.Data.Content)
+	}
+}
+
+func TestHandleRequest_GamesListsForeverAsWowForever(t *testing.T) {
+	t.Parallel()
+	f := newTestHandlerFixture(t)
+	f.config.LoadFunc = func(_ context.Context, _, _ string, target any) error {
+		edgeMapping(target.(*servermap.Mapping))
+		return nil
+	}
+	body := `{"type": 2, "guild_id": "guild-1", "channel_id": "chan-1", "data": {"name": "games"}}`
+	resp, err := f.handler.HandleRequest(context.Background(), f.signedRequest(t, body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var dr discord.InteractionResponse
+	if err := json.Unmarshal([]byte(resp.Body), &dr); err != nil {
+		t.Fatal(err)
+	}
+	c := dr.Data.Content
+	if !strings.Contains(c, "`wow-forever`") || strings.Contains(c, "`forever`") {
+		t.Fatalf("expected wow-forever and not forever, got %q", c)
 	}
 }

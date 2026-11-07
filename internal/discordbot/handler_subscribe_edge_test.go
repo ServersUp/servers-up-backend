@@ -131,6 +131,12 @@ func TestSubscribeEdge_Inputs(t *testing.T) {
 		{"forever eu not in catalog", edgeBody("g1", "c1", admin, "game", "forever", "region", "eu"), "", "Unknown region"},
 		{"forever region wildcard", edgeBody("g1", "c1", admin, "game", "forever", "region", "us"), "region#forever#us", "WoW Forever"},
 
+		// the user-facing game name wow-forever resolves to the forever game
+		{"wow-forever alias", edgeBody("g1", "c1", admin, "game", "wow-forever", "region", "us", "server", "normal"), "battlenet#us#2", "wow-forever-us-normal"},
+		{"WoW Forever typed as words", edgeBody("g1", "c1", admin, "game", "WoW Forever", "region", "us", "server", "pvp"), "battlenet#us#1", "wow-forever-us-pvp"},
+		{"wow-forever region wildcard", edgeBody("g1", "c1", admin, "game", "wow-forever", "region", "kr"), "region#forever#kr", "WoW Forever"},
+		{"forever label is wow-forever", edgeBody("g1", "c1", admin, "game", "forever", "region", "us", "server", "roleplay-pvp"), "battlenet#us#15", "wow-forever-us-roleplay-pvp"},
+
 		// wildcard
 		{"region wildcard", edgeBody("g1", "c1", admin, "game", "wow", "region", "us"), "region#wow#us", "all"},
 		{"region wildcard other game", edgeBody("g1", "c1", admin, "game", "ffxiv", "region", "na"), "region#ffxiv#na", "all"},

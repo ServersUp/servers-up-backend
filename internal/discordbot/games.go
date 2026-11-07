@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/ServersUp/servers-up-backend/internal/servermap"
+
 	"github.com/aws/aws-lambda-go/events"
 )
 
@@ -15,7 +17,7 @@ func (h *Handler) handleGames(ctx context.Context) (events.LambdaFunctionURLResp
 		slog.Error("failed to load server mapping", "error", err)
 		return h.discordResponse("System error: Unable to load server configuration right now. Please try again in a bit.")
 	}
-	games := mapping.ListGames()
+	games := servermap.DisplayGameKeys(mapping.ListGames())
 	if len(games) == 0 {
 		return h.discordResponse("No games are configured yet.")
 	}

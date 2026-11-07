@@ -294,10 +294,10 @@ func TestDuplicateServerIDs(t *testing.T) {
 func TestHumanLabel_Forever(t *testing.T) {
 	t.Parallel()
 	m := foreverMapping()
-	if got := m.HumanLabel("battlenet#us#2"); got != "forever-us-normal" {
+	if got := m.HumanLabel("battlenet#us#2"); got != "wow-forever-us-normal" {
 		t.Fatalf("got %q", got)
 	}
-	if got := m.HumanLabel("battlenet#kr#2"); got != "forever-kr-normal" {
+	if got := m.HumanLabel("battlenet#kr#2"); got != "wow-forever-kr-normal" {
 		t.Fatalf("got %q", got)
 	}
 	if got := m.HumanLabel("battlenet#us#57"); got != "wow-us-illidan" {

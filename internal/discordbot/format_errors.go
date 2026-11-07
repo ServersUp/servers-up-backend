@@ -23,7 +23,7 @@ func (h *Handler) formatLookupError(mapping servermap.Mapping, err error, rawGam
 		}
 		return fmt.Sprintf("Missing `server`. Type to search **server** for `%s` (%s).", servermap.NormalizeKey(rawGame), servermap.NormalizeKey(rawRegion))
 	case errors.Is(err, servermap.ErrUnknownGame):
-		games := mapping.ListGames()
+		games := servermap.DisplayGameKeys(mapping.ListGames())
 		if len(games) == 0 {
 			return fmt.Sprintf("Unknown game `%s`.", servermap.NormalizeKey(rawGame))
 		}

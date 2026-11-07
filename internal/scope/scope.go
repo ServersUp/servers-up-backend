@@ -100,3 +100,7 @@ func GameDisplayName(gameID string) string {
 	id := strings.ToLower(strings.TrimSpace(gameID))
 	return strings.ToUpper(id[:1]) + id[1:]
 }
+
+// ForeverStatusNote warns that WoW Forever status follows Blizzard's ruleset status, which lags
+// in-game outages. Shown wherever a user subscribes to Forever.
+const ForeverStatusNote = "⚠️ Forever status comes from Blizzard's ruleset status, which can lag behind in-game outages and may miss short ones while the game is in early launch."
