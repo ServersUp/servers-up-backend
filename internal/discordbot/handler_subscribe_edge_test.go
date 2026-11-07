@@ -363,3 +363,45 @@ func TestSubscribeEdge_DependencyFailures(t *testing.T) {
 		})
 	}
 }
+
+func TestSubscribeEdge_ForeverStatusNote(t *testing.T) {
+	t.Parallel()
+	const note = "can lag behind in-game outages and may miss short ones while the game is in early launch"
+	cases := []struct {
+		name     string
+		opts     []string
+		wantNote bool
+	}{
+		{"forever ruleset", []string{"game", "forever", "region", "us", "server", "normal"}, true},
+		{"forever whole region", []string{"game", "forever", "region", "us"}, true},
+		{"forever ruleset with role", []string{"game", "forever", "region", "us", "server", "normal", "role", "777"}, true},
+		{"wow server", []string{"game", "wow", "region", "us", "server", "illidan"}, false},
+		{"wow whole region", []string{"game", "wow", "region", "us"}, false},
+		{"ffxiv server", []string{"game", "ffxiv", "region", "na", "server", "alpha"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newEdgeFixture(t)
+			content := subscribeRespContent(t, f.testHandlerFixture, edgeBody("g1", "c1", "8", tc.opts...))
+			if !strings.Contains(content, "Subscribed") {
+				t.Fatalf("expected a confirmation, got %q", content)
+			}
+			if got := strings.Contains(content, note); got != tc.wantNote {
+				t.Fatalf("note present=%v want %v in %q", got, tc.wantNote, content)
+			}
+		})
+	}
+}
+
+func TestSubscribeEdge_AlreadySubscribedForeverHasNoNote(t *testing.T) {
+	t.Parallel()
+	f := newEdgeFixture(t)
+	f.db.ListFunc = func(context.Context, string) ([]models.Subscription, error) {
+		return []models.Subscription{{ServerID: "battlenet#us#2", ChannelID: "c1", GuildID: "g1"}}, nil
+	}
+	content := subscribeRespContent(t, f.testHandlerFixture, edgeBody("g1", "c1", "8", "game", "forever", "region", "us", "server", "normal"))
+	if strings.Contains(content, "early launch") {
+		t.Fatalf("already-subscribed reply should be unchanged: %q", content)
+	}
+}
