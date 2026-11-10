@@ -31,6 +31,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 )
 
+var roleIDPattern = regexp.MustCompile(`^[0-9]{17,20}$`)
+
 var webhookURLPattern = regexp.MustCompile(`^https://discord\.com/api/webhooks/[0-9]+/[A-Za-z0-9_-]+$`)
 
 // allowedOrigin is the canonical site origin (default CORS value); the legacy host stays
@@ -183,12 +185,17 @@ func (h *apiHandler) HandleRequest(ctx context.Context, event events.LambdaFunct
 		return errResponse(400, "invalid webhook url", headers), nil
 	}
 
+	roleID := strings.TrimSpace(req.RoleID)
+	if roleID != "" && !roleIDPattern.MatchString(roleID) {
+		return errResponse(400, "role id must be the numeric Discord role ID", headers), nil
+	}
+
 	pk, label, scopeType, gameID, regionKey, err := h.resolveTarget(ctx, req.Game, req.Region, req.Server)
 	if err != nil {
 		return errResponse(400, err.Error(), headers), nil
 	}
 
-	if err := h.proveWebhook(ctx, webhookURL, req.RoleID, gameID); err != nil {
+	if err := h.proveWebhook(ctx, webhookURL, roleID, gameID); err != nil {
 		slog.Warn("webhook ownership proof failed", "error", err)
 		return errResponse(400, "webhook ownership proof failed", headers), nil
 	}
@@ -207,7 +214,7 @@ func (h *apiHandler) HandleRequest(ctx context.Context, event events.LambdaFunct
 	subscription := models.Subscription{
 		ServerID:       pk,
 		SubscriptionID: fmt.Sprintf("%d", time.Now().UnixNano()),
-		Mention:        req.RoleID,
+		Mention:        mentionFor(roleID),
 		ServerLabel:    label,
 		TargetType:     "webhook",
 		WebhookURL:     webhookURL,
@@ -387,7 +394,12 @@ func (h *apiHandler) proveWebhook(ctx context.Context, webhookURL, roleID, gameI
 	if gameID == "forever" {
 		content += "\n" + scope.ForeverStatusNote
 	}
-	payload := map[string]any{"content": content}
+	// Only the chosen role may be pinged, never @everyone or anything else in the text.
+	mentions := map[string]any{"parse": []string{}}
+	if roleID != "" {
+		mentions = map[string]any{"roles": []string{roleID}}
+	}
+	payload := map[string]any{"content": content, "allowed_mentions": mentions}
 	body, _ := json.Marshal(payload)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), bytes.NewReader(body))
@@ -405,6 +417,14 @@ func (h *apiHandler) proveWebhook(ctx context.Context, webhookURL, roleID, gameI
 		return fmt.Errorf("webhook returned %d", resp.StatusCode)
 	}
 	return nil
+}
+
+// mentionFor stores the role as <@&id>, the form the notify pipeline reads.
+func mentionFor(roleID string) string {
+	if roleID == "" {
+		return ""
+	}
+	return "<@&" + roleID + ">"
 }
 
 func normalizeWebhookURL(raw string) string {
