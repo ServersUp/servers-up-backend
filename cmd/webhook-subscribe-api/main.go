@@ -141,16 +141,9 @@ func (h *apiHandler) HandleRequest(ctx context.Context, event events.LambdaFunct
 			origin = event.Headers["Origin"]
 		}
 	}
-	allowOrigin := allowedOrigin
-	if allowedOrigins[origin] {
-		allowOrigin = origin
-	}
-	headers := map[string]string{
-		"Content-Type":                 "application/json",
-		"Access-Control-Allow-Origin":  allowOrigin,
-		"Access-Control-Allow-Methods": "POST, OPTIONS",
-		"Access-Control-Allow-Headers": "Content-Type",
-	}
+	// CORS headers come from the Function URL's CORS config; emitting them here too
+	// duplicates Access-Control-Allow-Origin and browsers reject the response.
+	headers := map[string]string{"Content-Type": "application/json"}
 
 	if event.RequestContext.HTTP.Method == "OPTIONS" {
 		return events.LambdaFunctionURLResponse{

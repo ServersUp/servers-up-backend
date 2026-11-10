@@ -117,8 +117,8 @@ func TestLegacyOriginAllowed(t *testing.T) {
 	if resp.StatusCode == 403 {
 		t.Fatalf("legacy origin rejected")
 	}
-	if got := resp.Headers["Access-Control-Allow-Origin"]; got != "https://serversup.armasn.dev" {
-		t.Fatalf("allow-origin %q", got)
+	if got, ok := resp.Headers["Access-Control-Allow-Origin"]; ok {
+		t.Fatalf("lambda must not set allow-origin (Function URL CORS does), got %q", got)
 	}
 }
 
