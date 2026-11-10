@@ -117,8 +117,8 @@ func TestLegacyOriginAllowed(t *testing.T) {
 	if resp.StatusCode == 403 {
 		t.Fatalf("legacy origin rejected")
 	}
-	if got := resp.Headers["Access-Control-Allow-Origin"]; got != "https://serversup.armasn.dev" {
-		t.Fatalf("allow-origin %q", got)
+	if got, ok := resp.Headers["Access-Control-Allow-Origin"]; ok {
+		t.Fatalf("lambda must not set allow-origin (Function URL CORS does), got %q", got)
 	}
 }
 
@@ -141,7 +141,7 @@ func TestDuplicate(t *testing.T) {
 func TestPersistence(t *testing.T) {
 	store := &fakeStore{}
 	h := testHandler(store)
-	body := `{"webhookUrl":"https://discord.com/api/webhooks/123/abc","roleId":"456","game":"wow","region":"us","server":"illidan"}`
+	body := `{"webhookUrl":"https://discord.com/api/webhooks/123/abc","roleId":"123456789012345678","game":"wow","region":"us","server":"illidan"}`
 	resp := invoke(h, body, allowedOrigin)
 	if resp.StatusCode != 200 {
 		t.Fatalf("expected 200 got %d body=%s", resp.StatusCode, resp.Body)
@@ -155,6 +155,9 @@ func TestPersistence(t *testing.T) {
 	got := store.subs[0]
 	if got.TargetType != "webhook" {
 		t.Errorf("expected webhook, got %q", got.TargetType)
+	}
+	if got.Mention != "<@&123456789012345678>" {
+		t.Errorf("mention must use <@&id> form, got %q", got.Mention)
 	}
 	if got.WebhookURL != "https://discord.com/api/webhooks/123/abc" {
 		t.Errorf("unexpected webhook url %q", got.WebhookURL)
@@ -372,5 +375,15 @@ func TestProveWebhookForeverNote(t *testing.T) {
 	_ = h.proveWebhook(context.Background(), "https://discord.com/api/webhooks/1/abc", "123", "forever")
 	if !strings.Contains(sent[0], "<@&123> ServersUp ownership verification") {
 		t.Fatalf("role mention lost: %s", sent[0])
+	}
+}
+
+func TestInvalidRoleID(t *testing.T) {
+	store := &fakeStore{}
+	h := testHandler(store)
+	body := `{"webhookUrl":"https://discord.com/api/webhooks/123/abc","roleId":"1> @everyone <@&1","game":"wow","region":"us","server":"illidan"}`
+	resp := invoke(h, body, allowedOrigin)
+	if resp.StatusCode != 400 || store.addCalled != 0 {
+		t.Fatalf("expected 400 and no save, got %d adds=%d", resp.StatusCode, store.addCalled)
 	}
 }
