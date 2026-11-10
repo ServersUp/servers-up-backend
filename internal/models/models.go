@@ -30,7 +30,7 @@ type Subscription struct {
 	// SubscriptionID is a unique identifier for this specific channel/role combo.
 	SubscriptionID string `json:"subscription_id" dynamodbav:"subscriptionId"`
 
-	GuildID   string `json:"guild_id" dynamodbav:"guildId"`
+	GuildID   string `json:"guild_id" dynamodbav:"guildId,omitempty"`
 	ChannelID string `json:"channel_id" dynamodbav:"channelId"`
 	Mention   string `json:"mention" dynamodbav:"mention"`
 	// RoleName is the Discord role display name (resolved at subscribe time when a bot token is configured).
