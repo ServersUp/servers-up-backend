@@ -26,7 +26,7 @@ func (h *Handler) handleStatus(ctx context.Context, interaction discord.Interact
 	rawGame := h.getOption(data.Options, "game")
 	rawRegion := h.getOption(data.Options, "region")
 	rawServer := h.getOption(data.Options, "server")
-	gameName := servermap.NormalizeGameKey(rawGame)
+	gameName := servermap.NormalizeKey(rawGame)
 	regionName := servermap.NormalizeKey(rawRegion)
 	serverName := servermap.NormalizeKey(rawServer)
 
