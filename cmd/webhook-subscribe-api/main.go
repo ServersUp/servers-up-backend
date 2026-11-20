@@ -195,7 +195,7 @@ func (h *apiHandler) HandleRequest(ctx context.Context, event events.LambdaFunct
 		return errResponse(400, err.Error(), headers), nil
 	}
 
-	if err := h.proveWebhook(ctx, webhookURL, roleID, gameID); err != nil {
+	if err := h.proveWebhook(ctx, webhookURL, roleID); err != nil {
 		slog.Warn("webhook ownership proof failed", "error", err)
 		return errResponse(400, "webhook ownership proof failed", headers), nil
 	}
@@ -276,7 +276,7 @@ func (h *apiHandler) resolveServerViaMapping(ctx context.Context, game, region, 
 // server requires a region; with only a game + region the target is every
 // server in that region. Region is always required (game-only is not supported).
 func (h *apiHandler) resolveTarget(ctx context.Context, game, region, server string) (pk, label, scopeType, gameID, regionKey string, err error) {
-	gameNorm := servermap.NormalizeGameKey(game)
+	gameNorm := servermap.NormalizeKey(game)
 	regionNorm := servermap.NormalizeKey(region)
 	serverNorm := servermap.NormalizeKey(server)
 
@@ -378,7 +378,7 @@ func (h *apiHandler) loadMapping(ctx context.Context) (servermap.Mapping, error)
 	})
 }
 
-func (h *apiHandler) proveWebhook(ctx context.Context, webhookURL, roleID, gameID string) error {
+func (h *apiHandler) proveWebhook(ctx context.Context, webhookURL, roleID string) error {
 	u, err := url.Parse(webhookURL)
 	if err != nil {
 		return err
@@ -390,9 +390,6 @@ func (h *apiHandler) proveWebhook(ctx context.Context, webhookURL, roleID, gameI
 	content := "ServersUp ownership verification"
 	if roleID != "" {
 		content = fmt.Sprintf("<@&%s> %s", roleID, content)
-	}
-	if gameID == "forever" {
-		content += "\n" + scope.ForeverStatusNote
 	}
 	// Only the chosen role may be pinged, never @everyone or anything else in the text.
 	mentions := map[string]any{"parse": []string{}}

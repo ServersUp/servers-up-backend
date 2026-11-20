@@ -1,7 +1,6 @@
 package discordbot
 
 import (
-	"sort"
 	"strings"
 
 	"github.com/ServersUp/servers-up-backend/internal/discord"
@@ -32,19 +31,9 @@ func optionStringValue(opt *discord.InteractionOption) string {
 }
 
 func autocompleteGames(mapping servermap.Mapping, partial string, max int) []discord.ApplicationCommandOptionChoice {
-	// Shown by display name (wow-forever); a typed game ID (forever) still matches.
-	q := servermap.NormalizeKey(partial)
-	var shown []string
-	for _, id := range mapping.ListGames() {
-		if d := servermap.DisplayGameKey(id); q == "" || strings.HasPrefix(d, q) || strings.HasPrefix(id, q) {
-			shown = append(shown, d)
-		}
-	}
-	sort.Strings(shown)
-	if max > 0 && len(shown) > max {
-		shown = shown[:max]
-	}
-	return keysToAutocompleteChoices(shown)
+	games := mapping.ListGames()
+	matches := filterSortedKeysPrefix(games, partial, max)
+	return keysToAutocompleteChoices(matches)
 }
 
 func autocompleteRegions(mapping servermap.Mapping, gameNorm, partial string, max int) ([]discord.ApplicationCommandOptionChoice, error) {
