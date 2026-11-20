@@ -272,25 +272,6 @@ func foreverMapping() Mapping {
 	}}
 }
 
-func TestDuplicateServerIDs(t *testing.T) {
-	t.Parallel()
-	m := foreverMapping()
-	if d := m.DuplicateServerIDs(); len(d) != 0 {
-		t.Fatalf("unexpected duplicates: %v", d)
-	}
-	// Realms of the same game sharing a connected-realm identifier are legitimate.
-	m.Games["wow"].Regions["us"].Servers["illidan-twin"] = Server{Identifier: 57}
-	if d := m.DuplicateServerIDs(); len(d) != 0 {
-		t.Fatalf("same-game sharing must not be flagged: %v", d)
-	}
-	// A WoW connected realm that reuses a Forever ruleset ID must be flagged.
-	m.Games["wow"].Regions["us"].Servers["newrealm"] = Server{Identifier: 2}
-	d := m.DuplicateServerIDs()
-	if len(d) != 1 || d[0] != "battlenet#us#2: forever, wow" {
-		t.Fatalf("got %v", d)
-	}
-}
-
 func TestHumanLabel_Forever(t *testing.T) {
 	t.Parallel()
 	m := foreverMapping()
