@@ -37,8 +37,8 @@ type objectPutter interface {
 
 // Snapshot is the public JSON document published for the status page CDN.
 type Snapshot struct {
-	GeneratedAt int64                `json:"generatedAt"`
-	Games       map[string]GameSnap  `json:"games"`
+	GeneratedAt int64               `json:"generatedAt"`
+	Games       map[string]GameSnap `json:"games"`
 }
 
 type GameSnap struct {
