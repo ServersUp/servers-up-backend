@@ -87,3 +87,15 @@ func TestAutocompleteServers_listsServers(t *testing.T) {
 		t.Fatalf("got %+v", choices)
 	}
 }
+
+func TestAutocompleteGames_displayName(t *testing.T) {
+	t.Parallel()
+	m := servermap.Mapping{Games: map[string]servermap.Game{
+		"wow":     {},
+		"forever": {DisplayName: "WoW Forever"},
+	}}
+	choices := autocompleteGames(m, "wow-f", 25)
+	if len(choices) != 1 || choices[0].Value != "wow-forever" || choices[0].Name != "wow-forever" {
+		t.Fatalf("got %+v", choices)
+	}
+}

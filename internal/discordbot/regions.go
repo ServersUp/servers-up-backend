@@ -26,6 +26,7 @@ func (h *Handler) handleRegions(ctx context.Context, data discord.InteractionDat
 		return h.discordResponse("System error: Unable to load server configuration right now. Please try again in a bit.")
 	}
 
+	gameName = mapping.GameSlug(mapping.ResolveGame(gameName))
 	regions, err := mapping.ListRegions(gameName)
 	if err != nil {
 		return h.discordResponse(h.formatLookupError(mapping, err, gameName, "", ""))

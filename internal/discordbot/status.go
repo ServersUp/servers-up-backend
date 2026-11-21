@@ -95,7 +95,7 @@ func (h *Handler) handleStatus(ctx context.Context, interaction discord.Interact
 		row, err = h.statusStore.GetServerStatus(ctx, gameID, technicalID)
 		if err != nil {
 			if errors.Is(err, db.ErrServerStatusNotFound) {
-				human := servermap.DisplayLabel(gameID, regionKey, serverKey)
+				human := mapping.DisplayLabel(gameID, regionKey, serverKey)
 				return h.discordResponse(fmt.Sprintf("No status recorded yet for **%s**. The poller may not have run yet.", human))
 			}
 			slog.Error("failed to load server status", "error", err, "gameID", gameID, "serverID", technicalID)
@@ -108,7 +108,7 @@ func (h *Handler) handleStatus(ctx context.Context, interaction discord.Interact
 
 	metrics.EmitCount(metrics.Namespace, "StatusLookup", map[string]string{"gameId": gameID}, 1)
 
-	human := servermap.DisplayLabel(gameID, regionKey, serverKey)
+	human := mapping.DisplayLabel(gameID, regionKey, serverKey)
 	updated := formatStatusLastUpdated(row.LastUpdatedAt)
 	return h.discordResponse(fmt.Sprintf("**%s** is **%s** (last changed %s).", human, row.Status, updated))
 }

@@ -193,7 +193,7 @@ func BuildSnapshot(ctx context.Context, mapping servermap.Mapping, statusDB stat
 				}
 				servers = append(servers, ServerSnap{
 					Slug:          slug,
-					Label:         servermap.DisplayLabel(gameID, regionKey, slug),
+					Label:         mapping.DisplayLabel(gameID, regionKey, slug),
 					Status:        status,
 					LastUpdatedAt: lastUpdated,
 				})

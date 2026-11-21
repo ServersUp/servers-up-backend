@@ -32,6 +32,7 @@ func (h *Handler) handleServers(ctx context.Context, data discord.InteractionDat
 		return h.discordResponse("System error: Unable to load server configuration right now. Please try again in a bit.")
 	}
 
+	gameName = mapping.GameSlug(mapping.ResolveGame(gameName))
 	servers, err := mapping.ListServers(gameName, regionName)
 	if err != nil {
 		return h.discordResponse(h.formatLookupError(mapping, err, gameName, regionName, ""))

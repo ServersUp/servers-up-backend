@@ -9,10 +9,10 @@ import (
 
 func TestDisplayLabel(t *testing.T) {
 	t.Parallel()
-	if got := DisplayLabel("wow", "eu", "kazzak"); got != "wow-eu-kazzak" {
+	if got := (Mapping{}).DisplayLabel("wow", "eu", "kazzak"); got != "wow-eu-kazzak" {
 		t.Fatalf("got %q, want wow-eu-kazzak", got)
 	}
-	if got := DisplayLabel("wow", "us", "illidan"); got != "wow-us-illidan" {
+	if got := (Mapping{}).DisplayLabel("wow", "us", "illidan"); got != "wow-us-illidan" {
 		t.Fatalf("got %q, want wow-us-illidan", got)
 	}
 }
@@ -283,5 +283,43 @@ func TestHumanLabel_Forever(t *testing.T) {
 	}
 	if got := m.HumanLabel("battlenet#us#57"); got != "wow-us-illidan" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestDisplayNames(t *testing.T) {
+	t.Parallel()
+	m := foreverMapping()
+	g := m.Games["forever"]
+	g.DisplayName = "WoW Forever"
+	m.Games["forever"] = g
+
+	for _, in := range []string{"forever", "wow-forever", "WoW Forever", "  wow_forever "} {
+		if got := m.ResolveGame(in); got != "forever" {
+			t.Fatalf("ResolveGame(%q) = %q", in, got)
+		}
+	}
+	if got := m.ResolveGame("wow"); got != "wow" {
+		t.Fatalf("game without a display name: %q", got)
+	}
+	if got := m.ResolveGame("nope"); got != "nope" {
+		t.Fatalf("unknown input should come back normalized: %q", got)
+	}
+	if got := m.GameSlugs(); len(got) != 2 || got[0] != "wow" || got[1] != "wow-forever" {
+		t.Fatalf("GameSlugs = %v", got)
+	}
+	if got := m.DisplayLabel("forever", "us", "normal"); got != "wow-forever-us-normal" {
+		t.Fatalf("DisplayLabel = %q", got)
+	}
+	if got := m.HumanLabel("battlenet#us#2"); got != "wow-forever-us-normal" {
+		t.Fatalf("HumanLabel = %q", got)
+	}
+	if gameID, region, server, ok := m.Locate("battlenet#us#2"); !ok || gameID != "forever" || region != "us" || server != "normal" {
+		t.Fatalf("Locate = %q %q %q %v", gameID, region, server, ok)
+	}
+	if r, err := m.ListRegions("wow-forever"); err != nil || len(r) != 2 {
+		t.Fatalf("ListRegions = %v %v", r, err)
+	}
+	if gameID, _, serverKey, _, _, err := m.Lookup("wow-forever", "us", "normal"); err != nil || gameID != "forever" || serverKey != "normal" {
+		t.Fatalf("Lookup = %q %q %v", gameID, serverKey, err)
 	}
 }

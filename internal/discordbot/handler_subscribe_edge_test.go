@@ -23,7 +23,7 @@ func edgeMapping(m *servermap.Mapping) {
 		"ffxiv": {Provider: "lodestone", Regions: map[string]servermap.Region{
 			"na": {Servers: map[string]servermap.Server{"alpha": {Identifier: 1}}},
 		}},
-		"forever": {Provider: "battlenet", Regions: map[string]servermap.Region{
+		"forever": {Provider: "battlenet", DisplayName: "WoW Forever", Regions: map[string]servermap.Region{
 			"us": {Servers: map[string]servermap.Server{"pvp": {Identifier: 1}, "normal": {Identifier: 2}, "roleplay": {Identifier: 3}, "roleplay-pvp": {Identifier: 15}}},
 			"kr": {Servers: map[string]servermap.Server{"pvp": {Identifier: 1}, "normal": {Identifier: 2}}},
 		}},
