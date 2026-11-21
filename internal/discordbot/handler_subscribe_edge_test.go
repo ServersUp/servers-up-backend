@@ -130,6 +130,9 @@ func TestSubscribeEdge_Inputs(t *testing.T) {
 		{"forever kr only has two rulesets", edgeBody("g1", "c1", admin, "game", "forever", "region", "kr", "server", "roleplay"), "", ""},
 		{"forever eu not in catalog", edgeBody("g1", "c1", admin, "game", "forever", "region", "eu"), "", "Unknown region"},
 		{"forever region wildcard", edgeBody("g1", "c1", admin, "game", "forever", "region", "us"), "region#forever#us", "WoW Forever"},
+		{"forever by slug", edgeBody("g1", "c1", admin, "game", "wow-forever", "region", "us", "server", "normal"), "battlenet#us#2", "wow-forever-us-normal"},
+		{"forever by display name", edgeBody("g1", "c1", admin, "game", "WoW Forever", "region", "us", "server", "Roleplay PvP"), "battlenet#us#15", "wow-forever-us-roleplay-pvp"},
+		{"forever region wildcard by slug", edgeBody("g1", "c1", admin, "game", "wow-forever", "region", "us"), "region#forever#us", "WoW Forever"},
 
 		// wildcard
 		{"region wildcard", edgeBody("g1", "c1", admin, "game", "wow", "region", "us"), "region#wow#us", "all"},

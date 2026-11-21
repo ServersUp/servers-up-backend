@@ -12,10 +12,10 @@ import (
 func TestSplitGameServerHuman(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		in           string
-		wantGame     string
-		wantRegion   string
-		wantServer   string
+		in         string
+		wantGame   string
+		wantRegion string
+		wantServer string
 	}{
 		{"wow-us-illidan", "wow", "us", "illidan"},
 		{"wow-eu-kazzak", "wow", "eu", "kazzak"},
