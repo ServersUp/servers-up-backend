@@ -181,6 +181,7 @@ type subscribeTarget struct {
 // options. gameName and regionName are required; a server is optional. With a
 // game + region and no server the target is every server in that region.
 func (h *Handler) resolveSubscribeTarget(mapping servermap.Mapping, gameName, regionName, serverName string) (subscribeTarget, *events.LambdaFunctionURLResponse) {
+	gameName = mapping.ResolveGame(gameName)
 	if gameName == "" {
 		msg := "A **game** is required. Run `/subscribe` and pick a game."
 		return subscribeTarget{}, msgRespPtr(msg)
@@ -203,7 +204,7 @@ func (h *Handler) resolveSubscribeTarget(mapping servermap.Mapping, gameName, re
 		technicalID := serverid.Generate(game.Provider, regionKey, server.Identifier)
 		return subscribeTarget{
 			pk:     technicalID,
-			label:  servermap.DisplayLabel(gameID, regionKey, serverKey),
+			label:  mapping.DisplayLabel(gameID, regionKey, serverKey),
 			gameID: gameID,
 			region: regionKey,
 		}, nil
@@ -244,9 +245,6 @@ func (h *Handler) resolveSubscribeTarget(mapping servermap.Mapping, gameName, re
 
 // subscribeSuccess builds the confirmation message. Wildcard scopes mention the
 // aggregate (all down / all up) behavior.
-// foreverStatusNote is appended to Forever confirmations: Blizzard's ruleset status is the only signal.
-const foreverStatusNote = "\n⚠️ Forever status comes from Blizzard's ruleset status, which can lag behind in-game outages and may miss short ones while the game is in early launch."
-
 func (h *Handler) subscribeSuccess(ctx context.Context, guildID, channelID, gameID, label, scopeType, roleName, mention string) (events.LambdaFunctionURLResponse, error) {
 	chLabel := h.channelPretty(ctx, guildID, channelID)
 	aggNote := ""
@@ -254,7 +252,7 @@ func (h *Handler) subscribeSuccess(ctx context.Context, guildID, channelID, game
 		aggNote = " You'll be notified once when they all go down and once when they all come back up."
 	}
 	if gameID == "forever" {
-		aggNote += foreverStatusNote
+		aggNote += "\n" + scope.ForeverStatusNote
 	}
 	switch {
 	case roleName != "":

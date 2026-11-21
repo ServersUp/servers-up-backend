@@ -31,7 +31,7 @@ func optionStringValue(opt *discord.InteractionOption) string {
 }
 
 func autocompleteGames(mapping servermap.Mapping, partial string, max int) []discord.ApplicationCommandOptionChoice {
-	games := mapping.ListGames()
+	games := mapping.GameSlugs()
 	matches := filterSortedKeysPrefix(games, partial, max)
 	return keysToAutocompleteChoices(matches)
 }

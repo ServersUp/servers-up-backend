@@ -39,6 +39,9 @@ func (h *Handler) subscriptionUnsubscribeChoiceText(ctx context.Context, guildID
 		return fmt.Sprintf("%s · %s · in %s", human, role, ch)
 	}
 	game, region, server := splitGameServerHuman(human)
+	if g, r, s, ok := mapping.Locate(sub.ServerID); ok {
+		game, region, server = mapping.GameSlug(g), r, s
+	}
 	if region != "" && server != "" {
 		return fmt.Sprintf("%s · %s · %s · %s · in %s", game, region, server, role, ch)
 	}

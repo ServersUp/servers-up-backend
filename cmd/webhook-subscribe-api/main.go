@@ -81,7 +81,7 @@ type apiHandler struct {
 	configBucket     string
 	serverMappingKey string
 	httpClient       *http.Client
-	resolveServer    func(ctx context.Context, game, region, server string) (string, string, error)
+	resolveServer    func(ctx context.Context, game, region, server string) (techID, label, gameID string, err error)
 	scopes           scopeStateStore
 	gameStatuses     gameStatusLister
 }
@@ -195,7 +195,7 @@ func (h *apiHandler) HandleRequest(ctx context.Context, event events.LambdaFunct
 		return errResponse(400, err.Error(), headers), nil
 	}
 
-	if err := h.proveWebhook(ctx, webhookURL, roleID); err != nil {
+	if err := h.proveWebhook(ctx, webhookURL, roleID, gameID); err != nil {
 		slog.Warn("webhook ownership proof failed", "error", err)
 		return errResponse(400, "webhook ownership proof failed", headers), nil
 	}
@@ -258,18 +258,18 @@ func errResponse(status int, msg string, headers map[string]string) events.Lambd
 	}
 }
 
-func (h *apiHandler) resolveServerViaMapping(ctx context.Context, game, region, server string) (string, string, error) {
+func (h *apiHandler) resolveServerViaMapping(ctx context.Context, game, region, server string) (string, string, string, error) {
 	mapping, err := h.loadMapping(ctx)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	gameID, regionKey, serverKey, g, s, lookupErr := mapping.Lookup(game, region, server)
 	if lookupErr != nil {
-		return "", "", fmt.Errorf("unknown server %s/%s/%s", game, region, server)
+		return "", "", "", fmt.Errorf("unknown server %s/%s/%s", game, region, server)
 	}
 	techID := serverid.Generate(g.Provider, regionKey, s.Identifier)
-	label := servermap.DisplayLabel(gameID, regionKey, serverKey)
-	return techID, label, nil
+	label := mapping.DisplayLabel(gameID, regionKey, serverKey)
+	return techID, label, gameID, nil
 }
 
 // resolveTarget resolves the subscription target from the request fields. A
@@ -284,14 +284,16 @@ func (h *apiHandler) resolveTarget(ctx context.Context, game, region, server str
 		return "", "", "", "", "", fmt.Errorf("server requires a region")
 	}
 	if serverNorm != "" {
-		techID, label, err := h.resolveServer(ctx, gameNorm, regionNorm, serverNorm)
-		return techID, label, "", gameNorm, regionNorm, err
+		techID, label, gameID, err := h.resolveServer(ctx, gameNorm, regionNorm, serverNorm)
+		return techID, label, "", gameID, regionNorm, err
 	}
 
 	mapping, err := h.loadMapping(ctx)
 	if err != nil {
 		return "", "", "", "", "", err
 	}
+	gameNorm = mapping.ResolveGame(game)
+
 	if gameNorm == "" {
 		return "", "", "", "", "", fmt.Errorf("game is required")
 	}
@@ -378,7 +380,7 @@ func (h *apiHandler) loadMapping(ctx context.Context) (servermap.Mapping, error)
 	})
 }
 
-func (h *apiHandler) proveWebhook(ctx context.Context, webhookURL, roleID string) error {
+func (h *apiHandler) proveWebhook(ctx context.Context, webhookURL, roleID, gameID string) error {
 	u, err := url.Parse(webhookURL)
 	if err != nil {
 		return err
@@ -390,6 +392,9 @@ func (h *apiHandler) proveWebhook(ctx context.Context, webhookURL, roleID string
 	content := "ServersUp ownership verification"
 	if roleID != "" {
 		content = fmt.Sprintf("<@&%s> %s", roleID, content)
+	}
+	if gameID == "forever" {
+		content += "\n" + scope.ForeverStatusNote
 	}
 	// Only the chosen role may be pinged, never @everyone or anything else in the text.
 	mentions := map[string]any{"parse": []string{}}

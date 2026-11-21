@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -51,8 +53,8 @@ func testHandler(store *fakeStore) *apiHandler {
 				Body:       http.NoBody,
 			}
 		})},
-		resolveServer: func(_ context.Context, _, _, _ string) (string, string, error) {
-			return "battlenet#us#11", "wow-illidan", nil
+		resolveServer: func(_ context.Context, _, _, _ string) (string, string, string, error) {
+			return "battlenet#us#11", "wow-illidan", "wow", nil
 		},
 	}
 	return h
@@ -208,7 +210,8 @@ func testMapping() *servermap.Mapping {
 			},
 		},
 		"forever": {
-			Provider: "battlenet",
+			Provider:    "battlenet",
+			DisplayName: "WoW Forever",
 			Regions: map[string]servermap.Region{
 				"us": {Servers: map[string]servermap.Server{
 					"pvp":    {Identifier: 1},
@@ -314,7 +317,7 @@ func TestResolveTargetScopes(t *testing.T) {
 func TestResolveTargetForever(t *testing.T) {
 	h := testScopeHandler(&fakeStore{}, &fakeScopeStore{})
 	pk, label, scopeType, game, _, err := h.resolveTarget(context.Background(), "forever", "us", "normal")
-	if err != nil || pk != "battlenet#us#2" || label != "forever-us-normal" || scopeType != "" || game != "forever" {
+	if err != nil || pk != "battlenet#us#2" || label != "wow-forever-us-normal" || scopeType != "" || game != "forever" {
 		t.Fatalf("got %q %q %q %q %v", pk, label, scopeType, game, err)
 	}
 	pk, label, scopeType, _, _, err = h.resolveTarget(context.Background(), "forever", "us", "")
@@ -336,5 +339,38 @@ func TestInvalidRoleID(t *testing.T) {
 	resp := invoke(h, body, allowedOrigin)
 	if resp.StatusCode != 400 || store.addCalled != 0 {
 		t.Fatalf("expected 400 and no save, got %d adds=%d", resp.StatusCode, store.addCalled)
+	}
+}
+
+func TestResolveTargetDisplayNameAlias(t *testing.T) {
+	h := testScopeHandler(&fakeStore{}, &fakeScopeStore{})
+	for _, game := range []string{"wow-forever", "WoW Forever", "forever"} {
+		pk, label, _, gameID, _, err := h.resolveTarget(context.Background(), game, "us", "normal")
+		if err != nil || pk != "battlenet#us#2" || label != "wow-forever-us-normal" || gameID != "forever" {
+			t.Fatalf("%q: got %q %q %q %v", game, pk, label, gameID, err)
+		}
+	}
+	pk, _, scopeType, gameID, _, err := h.resolveTarget(context.Background(), "wow-forever", "us", "")
+	if err != nil || pk != "region#forever#us" || scopeType != "region" || gameID != "forever" {
+		t.Fatalf("region: got %q %q %q %v", pk, scopeType, gameID, err)
+	}
+}
+
+func TestProveWebhookForeverNote(t *testing.T) {
+	var sent string
+	h := &apiHandler{httpClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) *http.Response {
+		b, _ := io.ReadAll(req.Body)
+		var payload struct{ Content string }
+		_ = json.Unmarshal(b, &payload)
+		sent = payload.Content
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: http.NoBody}
+	})}}
+	for game, want := range map[string]bool{"forever": true, "wow": false} {
+		if err := h.proveWebhook(context.Background(), "https://discord.com/api/webhooks/1/abc", "", game); err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.Contains(sent, scope.ForeverStatusNote); got != want {
+			t.Fatalf("%s: note present=%v want %v in %q", game, got, want, sent)
+		}
 	}
 }

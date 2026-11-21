@@ -1,8 +1,12 @@
 package discordbot
 
 import (
+	"context"
 	"strings"
 	"testing"
+
+	"github.com/ServersUp/servers-up-backend/internal/models"
+	"github.com/ServersUp/servers-up-backend/internal/servermap"
 )
 
 func TestSplitGameServerHuman(t *testing.T) {
@@ -53,3 +57,16 @@ func FuzzSplitGameServerHuman(f *testing.F) {
 	})
 }
 
+func TestUnsubscribeChoiceText_hyphenatedGameName(t *testing.T) {
+	t.Parallel()
+	m := servermap.Mapping{Games: map[string]servermap.Game{
+		"forever": {Provider: "battlenet", DisplayName: "WoW Forever", Regions: map[string]servermap.Region{
+			"us": {Servers: map[string]servermap.Server{"normal": {Identifier: 2}}},
+		}},
+	}}
+	sub := models.Subscription{ServerID: "battlenet#us#2", ServerLabel: "wow-forever-us-normal", ChannelID: "c1"}
+	got := (&Handler{}).subscriptionUnsubscribeChoiceText(context.Background(), "g1", m, sub)
+	if !strings.HasPrefix(got, "wow-forever · us · normal · ") {
+		t.Fatalf("got %q", got)
+	}
+}
